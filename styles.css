@@ -1,0 +1,629 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg: #eef3f6;
+    --panel: #fbfdfe;
+    --panel-strong: #f4f8fb;
+    --line: #d7e2ea;
+    --line-strong: #bdd0dc;
+    --text: #18242d;
+    --muted: #61717d;
+    --accent: #146c94;
+    --accent-strong: #0f4c68;
+    --accent-soft: rgba(20, 108, 148, 0.1);
+    --danger-soft: rgba(176, 63, 46, 0.1);
+    --danger: #9f3526;
+    --shadow: 0 18px 48px rgba(28, 52, 66, 0.08);
+}
+
+body {
+    font-family: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background:
+        radial-gradient(circle at top left, rgba(20, 108, 148, 0.08), transparent 28%),
+        linear-gradient(180deg, #f7fafc 0%, var(--bg) 100%);
+    min-height: 100vh;
+    padding: 24px;
+    color: var(--text);
+}
+
+.container {
+    max-width: 1680px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 28px;
+    padding: 32px;
+    box-shadow: var(--shadow);
+    min-height: calc(100vh - 48px);
+}
+
+.header {
+    margin-bottom: 24px;
+    padding: 4px 0 20px;
+    border-bottom: 1px solid var(--line);
+}
+
+.header-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+}
+
+.header h1 {
+    color: var(--text);
+    font-size: clamp(2rem, 3vw, 3.1rem);
+    margin-bottom: 10px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    max-width: none;
+    text-wrap: balance;
+}
+
+.header p {
+    color: var(--muted);
+    font-size: 1.05rem;
+    line-height: 1.6;
+    max-width: 64ch;
+}
+
+/* Controls Section */
+.controls {
+    display: flex;
+    gap: 18px;
+    margin-bottom: 20px;
+    padding: 20px;
+    background: var(--panel-strong);
+    border-radius: 20px;
+    border: 1px solid var(--line);
+}
+
+.scope-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 22px 24px;
+    margin-bottom: 28px;
+    background:
+        linear-gradient(135deg, rgba(20, 108, 148, 0.1), rgba(15, 76, 104, 0.03)),
+        var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+}
+
+.scope-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.scope-eyebrow {
+    color: var(--accent-strong);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.scope-title {
+    font-size: clamp(1.4rem, 2vw, 2rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+}
+
+.scope-subtitle {
+    color: var(--muted);
+    max-width: 62ch;
+    line-height: 1.5;
+}
+
+.scope-metrics {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.scope-chip {
+    min-width: 112px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.76);
+    border: 1px solid rgba(255, 255, 255, 0.75);
+    box-shadow: 0 8px 20px rgba(31, 59, 78, 0.06);
+}
+
+.scope-chip span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+
+.scope-chip strong {
+    font-size: 1.4rem;
+    color: var(--text);
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.control-group label {
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+select {
+    width: 100%;
+    padding: 13px 15px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    font-size: 1em;
+    background: rgba(255, 255, 255, 0.95);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+select:disabled {
+    background: #f3f6f8;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+select:hover:not(:disabled) {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(20, 108, 148, 0.08);
+}
+
+select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(20, 108, 148, 0.12);
+}
+
+/* Main Content Layout */
+.main-content {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 30px;
+    min-height: calc(100vh - 400px);
+}
+
+.left-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* Overview Cards */
+.overview-card {
+    background: var(--panel);
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 12px 32px rgba(22, 39, 49, 0.06);
+    border: 1px solid var(--line);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.overview-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 36px rgba(22, 39, 49, 0.09);
+}
+
+.collection-overview {
+    background: linear-gradient(180deg, rgba(20, 108, 148, 0.09), rgba(255, 255, 255, 0.96));
+}
+
+.dataset-overview {
+    background: linear-gradient(180deg, rgba(15, 76, 104, 0.08), rgba(255, 255, 255, 0.96));
+}
+
+.overview-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-bottom: 25px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+    color: var(--text);
+}
+
+.overview-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-bottom: 25px;
+}
+
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.stat-item:last-child {
+    border-bottom: none;
+}
+
+.stat-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.stat-number {
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: var(--accent-strong);
+}
+
+/* Status Badges */
+.status-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.status-badge {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid var(--line-strong);
+    padding: 9px 14px;
+    border-radius: 999px;
+    font-size: 0.92rem;
+    font-weight: 700;
+    text-transform: capitalize;
+    letter-spacing: 0.02em;
+    transition: all 0.2s ease;
+}
+
+.status-badge:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* Disease-specific badge colors */
+.status-glioblastoma {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border-color: rgba(159, 53, 38, 0.25);
+}
+
+.status-muted {
+    color: var(--muted);
+}
+
+.status-overflow {
+    background: rgba(20, 108, 148, 0.08);
+    border-style: dashed;
+    color: var(--accent-strong);
+}
+
+.regions-summary {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 0.96rem;
+    line-height: 1.6;
+    color: var(--muted);
+    font-weight: 500;
+    display: grid;
+    gap: 10px;
+}
+
+.summary-line {
+    display: grid;
+    gap: 6px;
+}
+
+.summary-line strong {
+    color: var(--text);
+    font-size: 0.82rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.summary-more {
+    color: var(--accent-strong);
+    font-weight: 700;
+}
+
+/* Donor Details */
+.donor-details {
+    background: var(--panel);
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 12px 32px rgba(22, 39, 49, 0.06);
+    border: 1px solid var(--line);
+}
+
+.donor-details h3 {
+    color: var(--text);
+    font-size: 1.15rem;
+    margin-bottom: 25px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.donor-info {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 25px;
+    padding: 20px;
+    background: var(--panel-strong);
+    border-radius: 16px;
+    border: 1px solid var(--line);
+}
+
+.donor-name {
+    font-size: 1.8em;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: -0.03em;
+}
+
+.donor-metadata {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.donor-meta-item {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 15px;
+    background: white;
+    border-radius: 20px;
+    font-size: 1em;
+    font-weight: 600;
+    color: var(--text);
+    border: 1px solid var(--line);
+}
+
+.donor-cells {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--accent-strong);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.donor-status-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 12px;
+    border: 2px dashed rgba(0, 0, 0, 0.1);
+}
+
+/* Cell Type Section */
+.cell-type-section,
+.brain-regions-section {
+    background: var(--panel);
+    border-radius: 20px;
+    padding: 25px;
+    box-shadow: 0 12px 32px rgba(22, 39, 49, 0.06);
+    border: 1px solid var(--line);
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.section-title {
+    color: var(--text);
+    font-size: 1.15rem;
+    font-weight: 700;
+}
+
+.view-toggle,
+.region-type-toggle {
+    display: flex;
+    background: #edf3f6;
+    border-radius: 12px;
+    padding: 3px;
+}
+
+.toggle-btn {
+    padding: 8px 16px;
+    border: none;
+    background: transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    color: var(--muted);
+}
+
+.toggle-btn:hover {
+    color: var(--text);
+}
+
+.toggle-btn.active {
+    background: var(--accent);
+    color: white;
+}
+
+/* Cell Type Content */
+.cell-type-content {
+    min-height: 300px;
+}
+
+.cell-type-table {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.cell-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    border-bottom: 1px solid #ecf0f1;
+    transition: background-color 0.3s ease;
+}
+
+.cell-row:hover {
+    background-color: var(--accent-soft);
+}
+
+.cell-type-name {
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+}
+
+.cell-count {
+    font-size: 1.2em;
+    font-weight: 700;
+    color: var(--accent-strong);
+    margin-left: 20px;
+}
+
+.cell-percentage {
+    font-size: 0.9em;
+    color: var(--muted);
+    margin-left: 10px;
+}
+
+/* Brain Regions */
+.regions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.chart-container {
+    height: 300px;
+}
+
+.regions-table {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.region-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    border-bottom: 1px solid #ecf0f1;
+    transition: background-color 0.3s ease;
+}
+
+.region-row:hover {
+    background-color: var(--accent-soft);
+}
+
+.region-name {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.region-count {
+    font-size: 1.2em;
+    font-weight: 700;
+    color: var(--accent-strong);
+}
+
+.region-percentage {
+    font-size: 0.9em;
+    color: var(--muted);
+    margin-left: 10px;
+}
+
+/* Utility Classes */
+.hidden {
+    display: none !important;
+}
+
+.no-data {
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+    padding: 40px;
+    background: rgba(97, 113, 125, 0.05);
+    border-radius: 14px;
+    border: 1px dashed var(--line-strong);
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+    .main-content {
+        grid-template-columns: 1fr;
+    }
+    
+    .regions-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .scope-banner {
+        flex-direction: column;
+    }
+
+    .scope-metrics {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 768px) {
+    .controls {
+        flex-direction: column;
+    }
+    
+    .header h1 {
+        font-size: 1.8em;
+        max-width: none;
+        text-wrap: pretty;
+    }
+
+    .donor-name {
+        font-size: 1.5em;
+    }
+
+    .section-header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: flex-start;
+    }
+}

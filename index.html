@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DigitalBrain Data Explorer - Single-Cell Dataset Explorer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <span class="header-kicker">DigitalBrain Data Explorer</span>
+            <h1>Single-Cell Brain Dataset Explorer</h1>
+            <p>Donor-normalized cohort views for harmonized single-cell brain data across collections, datasets, and disease conditions.</p>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="collectionSelect">Collection</label>
+                <select id="collectionSelect">
+                    <option value="">Select Collection</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="datasetSelect">Dataset</label>
+                <select id="datasetSelect" disabled>
+                    <option value="">Select Dataset</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="donorSelect">Donor</label>
+                <select id="donorSelect" disabled>
+                    <option value="">Select Donor</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="scope-banner">
+            <div class="scope-copy">
+                <span class="scope-eyebrow" id="scopeEyebrow">Current Scope</span>
+                <h2 class="scope-title" id="scopeTitle">All Collections</h2>
+                <p class="scope-subtitle" id="scopeSubtitle">Use the filters above to move from collection-level summaries down to donor-specific views.</p>
+            </div>
+            <div class="scope-metrics">
+                <div class="scope-chip">
+                    <span>Datasets</span>
+                    <strong id="scopeDatasets">0</strong>
+                </div>
+                <div class="scope-chip">
+                    <span>Donors</span>
+                    <strong id="scopeDonors">0</strong>
+                </div>
+                <div class="scope-chip">
+                    <span>Cells</span>
+                    <strong id="scopeCells">0</strong>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="left-panel">
+                <div id="collectionOverview" class="overview-card collection-overview hidden">
+                    <h3 class="overview-title" id="collectionOverviewTitle">Collection Overview</h3>
+                    <div class="overview-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Datasets</span>
+                            <span class="stat-number" id="collectionDatasets">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Donors</span>
+                            <span class="stat-number" id="collectionDonors">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Total Cells</span>
+                            <span class="stat-number" id="collectionCells">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Brain Regions</span>
+                            <span class="stat-number" id="collectionRegions">
+                                <span style="font-size:0.85em;color:#7f8c8d;display:inline-block;margin-right:8px;">Brodmann: <strong id="collectionRegionsBrod">0</strong></span>
+                                <span style="font-size:0.85em;color:#7f8c8d;">Gyral: <strong id="collectionRegionsGyral">0</strong></span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="status-badges" id="collectionStatuses"></div>
+                    <div class="regions-summary" id="collectionRegionsSummary"></div>
+                </div>
+
+                <div id="datasetOverview" class="overview-card dataset-overview hidden">
+                    <h3 class="overview-title" id="datasetOverviewTitle">Dataset Overview</h3>
+                    <div class="overview-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Donors</span>
+                            <span class="stat-number" id="datasetDonors">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Total Cells</span>
+                            <span class="stat-number" id="datasetCells">0</span>
+                        </div>
+                    </div>
+                    <div class="status-badges" id="datasetStatuses"></div>
+                    <div class="regions-summary" id="datasetRegionsSummary"></div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div id="donorDetails" class="donor-details hidden">
+                    <h3 id="donorDetailsTitle">Donor Details</h3>
+                    <div class="donor-info">
+                        <div class="donor-name" id="donorName">-</div>
+                        <div class="donor-metadata">
+                            <span class="donor-meta-item" id="donorAge">Age: -</span>
+                            <span class="donor-meta-item" id="donorGender">Gender: -</span>
+                        </div>
+                        <div class="donor-cells" id="donorCellsDisplay">0 cells</div>
+                    </div>
+                    <div class="donor-status-badges" id="donorStatusBadges"></div>
+                </div>
+
+                <div id="cellTypeSection" class="cell-type-section hidden">
+                    <div class="section-header">
+                        <h3 class="section-title" id="cellTypeTitle">Cell Type Distribution</h3>
+                        <div class="view-toggle">
+                            <button class="toggle-btn active" id="cellChartBtn" onclick="switchCellView('chart')">Chart</button>
+                            <button class="toggle-btn" id="cellTableBtn" onclick="switchCellView('table')">Table</button>
+                        </div>
+                    </div>
+                    <div class="cell-type-content">
+                        <div id="cellChartView" class="chart-container">
+                            <canvas id="cellTypeChart"></canvas>
+                        </div>
+                        <div id="cellTableView" class="cell-type-table hidden"></div>
+                    </div>
+                </div>
+
+                <div id="brainRegionsSection" class="brain-regions-section hidden">
+                    <div class="section-header">
+                        <h3 class="section-title" id="regionsTitle">Brain Region Distribution</h3>
+                        <div style="display:flex;gap:12px;align-items:center;">
+                            <div class="region-type-toggle">
+                                <button class="toggle-btn active" id="brodmannBtn" onclick="switchRegionType('brodmann')">Brodmann</button>
+                                <button class="toggle-btn" id="gyralBtn" onclick="switchRegionType('gyral')">Gyral</button>
+                            </div>
+                            <!-- Chart/Table toggle removed; always show chart + table listing -->
+                        </div>
+                    </div>
+
+                    <div class="regions-grid">
+                        <div id="regionChartView" class="chart-container">
+                            <canvas id="regionChart"></canvas>
+                        </div>
+                        <div class="regions-table" id="regionsTable">
+                            <div class="no-data">Please select a collection to view data</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="digitalneuron_data.js"></script>
+    <script src="data-model.js"></script>
+    <script src="ui.js"></script>
+    <script src="charts.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

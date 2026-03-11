@@ -22,6 +22,29 @@ function initializeEventListeners() {
         const donorId = e.target.value;
         updateView(collectionId, datasetId, donorId);
     });
+
+    document.getElementById('cellMetricPrimaryBtn').addEventListener('click', () => switchCellMetric('composition'));
+    document.getElementById('cellMetricSecondaryBtn').addEventListener('click', () => switchCellMetric('diversity'));
+    document.getElementById('cellMetricTertiaryBtn').addEventListener('click', () => switchCellMetric('comparison'));
+    document.getElementById('cellRangeTopBtn').addEventListener('click', () => switchCellRange('top'));
+    document.getElementById('cellRangeOtherBtn').addEventListener('click', () => switchCellRange('other'));
+    document.getElementById('cellRangeAllBtn').addEventListener('click', () => switchCellRange('all'));
+
+    document.getElementById('regionMetricPrimaryBtn').addEventListener('click', () => switchRegionMetric('composition'));
+    document.getElementById('regionMetricSecondaryBtn').addEventListener('click', () => switchRegionMetric('coverage'));
+    document.getElementById('regionMetricTertiaryBtn').addEventListener('click', () => switchRegionMetric('comparison'));
+    document.getElementById('regionRangeTopBtn').addEventListener('click', () => switchRegionRange('top'));
+    document.getElementById('regionRangeOtherBtn').addEventListener('click', () => switchRegionRange('other'));
+    document.getElementById('regionRangeAllBtn').addEventListener('click', () => switchRegionRange('all'));
+
+    document.addEventListener('click', (event) => {
+        const toggle = event.target.closest('.overview-toggle');
+        if (!toggle) {
+            return;
+        }
+
+        toggleOverviewExpansion(toggle.dataset.overview, toggle.dataset.section);
+    });
 }
 
 // Initialize application
@@ -67,3 +90,7 @@ if (document.readyState === 'loading') {
 // Export functions to global scope for onclick handlers
 window.switchRegionType = switchRegionType;
 window.switchCellView = switchCellView;
+window.switchCellMetric = switchCellMetric;
+window.switchRegionMetric = switchRegionMetric;
+window.switchCellRange = switchCellRange;
+window.switchRegionRange = switchRegionRange;

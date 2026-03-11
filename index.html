@@ -79,10 +79,14 @@
                         </div>
                         <div class="stat-item">
                             <span class="stat-label">Brain Regions</span>
-                            <span class="stat-number" id="collectionRegions">
-                                <span style="font-size:0.85em;color:#7f8c8d;display:inline-block;margin-right:8px;">Brodmann: <strong id="collectionRegionsBrod">0</strong></span>
-                                <span style="font-size:0.85em;color:#7f8c8d;">Gyral: <strong id="collectionRegionsGyral">0</strong></span>
+                            <span class="stat-number stat-breakdown" id="collectionRegions">
+                                <span class="stat-breakdown-item">Brodmann <strong id="collectionRegionsBrod">0</strong></span>
+                                <span class="stat-breakdown-item">Gyral <strong id="collectionRegionsGyral">0</strong></span>
                             </span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Cell Types</span>
+                            <span class="stat-number" id="collectionCellTypes">0</span>
                         </div>
                     </div>
                     <div class="status-badges" id="collectionStatuses"></div>
@@ -99,6 +103,17 @@
                         <div class="stat-item">
                             <span class="stat-label">Total Cells</span>
                             <span class="stat-number" id="datasetCells">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Brain Regions</span>
+                            <span class="stat-number stat-breakdown" id="datasetRegions">
+                                <span class="stat-breakdown-item">Brodmann <strong id="datasetRegionsBrod">0</strong></span>
+                                <span class="stat-breakdown-item">Gyral <strong id="datasetRegionsGyral">0</strong></span>
+                            </span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Cell Types</span>
+                            <span class="stat-number" id="datasetCellTypes">0</span>
                         </div>
                     </div>
                     <div class="status-badges" id="datasetStatuses"></div>
@@ -118,16 +133,33 @@
                         <div class="donor-cells" id="donorCellsDisplay">0 cells</div>
                     </div>
                     <div class="donor-status-badges" id="donorStatusBadges"></div>
+                    <div class="donor-highlights" id="donorHighlights"></div>
                 </div>
 
                 <div id="cellTypeSection" class="cell-type-section hidden">
                     <div class="section-header">
-                        <h3 class="section-title" id="cellTypeTitle">Cell Type Distribution</h3>
-                        <div class="view-toggle">
-                            <button class="toggle-btn active" id="cellChartBtn" onclick="switchCellView('chart')">Chart</button>
-                            <button class="toggle-btn" id="cellTableBtn" onclick="switchCellView('table')">Table</button>
+                        <div class="section-copy">
+                            <h3 class="section-title" id="cellTypeTitle">Cell Type Distribution</h3>
+                            <p class="section-subtitle" id="cellTypeSubtitle">Composition, diversity, and comparison views for the current scope.</p>
+                        </div>
+                        <div class="section-controls">
+                            <div class="metric-toggle" id="cellMetricToggle">
+                                <button class="toggle-btn active" id="cellMetricPrimaryBtn">Composition</button>
+                                <button class="toggle-btn" id="cellMetricSecondaryBtn">Diversity</button>
+                                <button class="toggle-btn" id="cellMetricTertiaryBtn">Comparison</button>
+                            </div>
+                            <div class="range-toggle" id="cellRangeToggle">
+                                <button class="toggle-btn active" id="cellRangeTopBtn">Top 10</button>
+                                <button class="toggle-btn" id="cellRangeOtherBtn">Top 10 + Other</button>
+                                <button class="toggle-btn" id="cellRangeAllBtn">All</button>
+                            </div>
+                            <div class="view-toggle">
+                                <button class="toggle-btn active" id="cellChartBtn" onclick="switchCellView('chart')">Chart</button>
+                                <button class="toggle-btn" id="cellTableBtn" onclick="switchCellView('table')">Table</button>
+                            </div>
                         </div>
                     </div>
+                    <div class="chart-insights" id="cellTypeInsights"></div>
                     <div class="cell-type-content">
                         <div id="cellChartView" class="chart-container">
                             <canvas id="cellTypeChart"></canvas>
@@ -138,16 +170,28 @@
 
                 <div id="brainRegionsSection" class="brain-regions-section hidden">
                     <div class="section-header">
-                        <h3 class="section-title" id="regionsTitle">Brain Region Distribution</h3>
-                        <div style="display:flex;gap:12px;align-items:center;">
+                        <div class="section-copy">
+                            <h3 class="section-title" id="regionsTitle">Brain Region Distribution</h3>
+                            <p class="section-subtitle" id="regionsSubtitle">Composition, coverage, and comparison views for regional annotations.</p>
+                        </div>
+                        <div class="section-controls">
+                            <div class="metric-toggle" id="regionMetricToggle">
+                                <button class="toggle-btn active" id="regionMetricPrimaryBtn">Composition</button>
+                                <button class="toggle-btn" id="regionMetricSecondaryBtn">Coverage</button>
+                                <button class="toggle-btn" id="regionMetricTertiaryBtn">Comparison</button>
+                            </div>
+                            <div class="range-toggle" id="regionRangeToggle">
+                                <button class="toggle-btn active" id="regionRangeTopBtn">Top 10</button>
+                                <button class="toggle-btn" id="regionRangeOtherBtn">Top 10 + Other</button>
+                                <button class="toggle-btn" id="regionRangeAllBtn">All</button>
+                            </div>
                             <div class="region-type-toggle">
                                 <button class="toggle-btn active" id="brodmannBtn" onclick="switchRegionType('brodmann')">Brodmann</button>
                                 <button class="toggle-btn" id="gyralBtn" onclick="switchRegionType('gyral')">Gyral</button>
                             </div>
-                            <!-- Chart/Table toggle removed; always show chart + table listing -->
                         </div>
                     </div>
-
+                    <div class="chart-insights" id="regionInsights"></div>
                     <div class="regions-grid">
                         <div id="regionChartView" class="chart-container">
                             <canvas id="regionChart"></canvas>

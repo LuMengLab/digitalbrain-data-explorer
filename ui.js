@@ -395,6 +395,11 @@ function renderScopeBanner(scope) {
     setText('scopeEyebrow', `Current Scope · ${scope.scopeKey.toUpperCase()}`);
     setText('scopeTitle', scopeTitleMap[scope.scopeKey]);
     setText('scopeSubtitle', subtitleMap[scope.scopeKey]);
+    // The title is truncated to one line on wide screens; expose the full text on hover.
+    const scopeTitleEl = document.getElementById('scopeTitle');
+    if (scopeTitleEl) {
+        scopeTitleEl.title = scopeTitleMap[scope.scopeKey];
+    }
     setText('scopeDatasets', scope.metrics.datasets.toLocaleString());
     setText('scopeDonors', scope.metrics.donors.toLocaleString());
     setText('scopeCells', scope.metrics.cells.toLocaleString());

@@ -435,6 +435,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .scope-eyebrow {
@@ -449,6 +451,7 @@ body {
     font-size: clamp(1.4rem, 2vw, 2rem);
     font-weight: 700;
     letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
 }
 
 .scope-subtitle {
@@ -460,7 +463,7 @@ body {
 .scope-metrics {
     display: flex;
     gap: 12px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     justify-content: flex-end;
 }
 
@@ -538,6 +541,7 @@ select:focus {
     flex-direction: column;
     align-items: flex-end;
     gap: 14px;
+    flex: 0 0 auto;
 }
 
 .view-switch-wrap {
@@ -1280,6 +1284,7 @@ select:focus {
     .scope-metrics {
         width: 100%;
         justify-content: flex-start;
+        flex-wrap: wrap;
     }
 }
 

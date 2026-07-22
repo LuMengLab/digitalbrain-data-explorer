@@ -58,9 +58,16 @@ function initializeAtlasControls() {
         return;
     }
 
+    let tourActive = false;
+
     function setOpen(open) {
         section.classList.toggle('show-settings', open);
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            maybeStartTour();
+        } else if (tourActive) {
+            endTour(true);
+        }
     }
 
     toggle.addEventListener('click', () => {
@@ -81,6 +88,179 @@ function initializeAtlasControls() {
             toggle.focus();
         }
     });
+
+    // One-time guided tour of the Atlas layer switch. It highlights each layer
+    // button in turn and is triggered the first time the settings drawer opens;
+    // a subtle pulse on the toggle invites that first open. State is remembered
+    // in localStorage so it never repeats.
+    const TOUR_KEY = 'digitalbrain.atlasLayerTourSeen';
+    const layerTabs = document.getElementById('dataLayerTabs');
+    const tourSteps = layerTabs
+        ? [
+            {
+                button: layerTabs.querySelector('[data-layer="cells"]'),
+                title: 'Cell profiles',
+                body: 'Show each region\u2019s cell-class composition as coloured markers on the 3D brain. Filter by cell class and minimum abundance.',
+            },
+            {
+                button: layerTabs.querySelector('[data-layer="functional"]'),
+                title: 'Functional connectivity',
+                body: 'Switch to fMRI-derived functional links (FC) between regions. Adjust the connection threshold and label DMN nodes.',
+            },
+            {
+                button: layerTabs.querySelector('[data-layer="structural"]'),
+                title: 'Structural connectivity',
+                body: 'Switch to structural links (SC) between regions, thresholded by within-matrix percentile.',
+            },
+        ].filter((step) => step.button)
+        : [];
+    const tourEnabled = tourSteps.length === 3;
+
+    let stepIndex = 0;
+    let pop = null;
+
+    function tourSeen() {
+        try {
+            return localStorage.getItem(TOUR_KEY) === '1';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function markTourSeen() {
+        try {
+            localStorage.setItem(TOUR_KEY, '1');
+        } catch (error) {
+            /* storage may be unavailable; the tour just shows again next time */
+        }
+    }
+
+    function buildPop() {
+        pop = document.createElement('div');
+        pop.className = 'atlas-tour-pop';
+        pop.hidden = true;
+        pop.setAttribute('role', 'dialog');
+        pop.setAttribute('aria-label', 'Atlas layer guide');
+        pop.innerHTML =
+            '<span class="atlas-tour-arrow" aria-hidden="true"></span>' +
+            '<span class="atlas-tour-step"></span>' +
+            '<h4 class="atlas-tour-title"></h4>' +
+            '<p class="atlas-tour-body"></p>' +
+            '<div class="atlas-tour-actions">' +
+            '<button type="button" class="atlas-tour-skip">Skip</button>' +
+            '<div class="atlas-tour-nav">' +
+            '<button type="button" class="atlas-tour-back">Back</button>' +
+            '<button type="button" class="atlas-tour-next">Next</button>' +
+            '</div></div>';
+        document.body.appendChild(pop);
+        pop.querySelector('.atlas-tour-skip').addEventListener('click', () => endTour(true));
+        pop.querySelector('.atlas-tour-back').addEventListener('click', () => gotoStep(stepIndex - 1));
+        pop.querySelector('.atlas-tour-next').addEventListener('click', () => {
+            if (stepIndex >= tourSteps.length - 1) {
+                endTour(true);
+            } else {
+                gotoStep(stepIndex + 1);
+            }
+        });
+    }
+
+    function positionPop(target) {
+        const rect = target.getBoundingClientRect();
+        const pw = pop.offsetWidth;
+        const ph = pop.offsetHeight;
+        const gap = 10;
+        let top = rect.bottom + gap;
+        let place = 'below';
+        if (top + ph > window.innerHeight - 8) {
+            top = rect.top - ph - gap;
+            place = 'above';
+        }
+        const left = Math.min(Math.max(8, rect.left), window.innerWidth - pw - 8);
+        pop.style.left = `${left}px`;
+        pop.style.top = `${Math.max(8, top)}px`;
+        pop.dataset.place = place;
+        const arrowLeft = Math.min(Math.max(16, rect.left + rect.width / 2 - left), pw - 16);
+        pop.style.setProperty('--arrow-left', `${arrowLeft}px`);
+    }
+
+    function renderStep() {
+        const step = tourSteps[stepIndex];
+        tourSteps.forEach((other) => other.button.classList.remove('atlas-tour-target'));
+        step.button.classList.add('atlas-tour-target');
+        pop.querySelector('.atlas-tour-step').textContent = `Step ${stepIndex + 1} of ${tourSteps.length}`;
+        pop.querySelector('.atlas-tour-title').textContent = step.title;
+        pop.querySelector('.atlas-tour-body').textContent = step.body;
+        pop.querySelector('.atlas-tour-back').disabled = stepIndex === 0;
+        pop.querySelector('.atlas-tour-next').textContent =
+            stepIndex >= tourSteps.length - 1 ? 'Done' : 'Next';
+        pop.hidden = false;
+        positionPop(step.button);
+    }
+
+    function gotoStep(index) {
+        stepIndex = Math.max(0, Math.min(tourSteps.length - 1, index));
+        renderStep();
+    }
+
+    function reposition() {
+        if (tourActive) {
+            positionPop(tourSteps[stepIndex].button);
+        }
+    }
+
+    function leaveTour() {
+        endTour(true);
+    }
+
+    function startTour() {
+        if (!tourEnabled || tourActive || tourSeen()) {
+            return;
+        }
+        // The open click may have been undone before this fires.
+        if (!section.classList.contains('show-settings')) {
+            return;
+        }
+        tourActive = true;
+        toggle.classList.remove('atlas-settings-pulse');
+        if (!pop) {
+            buildPop();
+        }
+        stepIndex = 0;
+        renderStep();
+        window.addEventListener('resize', reposition);
+        window.addEventListener('scroll', reposition, true);
+        window.addEventListener('hashchange', leaveTour);
+    }
+
+    function endTour(persist) {
+        if (!tourActive) {
+            return;
+        }
+        tourActive = false;
+        window.removeEventListener('resize', reposition);
+        window.removeEventListener('scroll', reposition, true);
+        window.removeEventListener('hashchange', leaveTour);
+        tourSteps.forEach((step) => step.button.classList.remove('atlas-tour-target'));
+        if (pop) {
+            pop.hidden = true;
+        }
+        if (persist) {
+            markTourSeen();
+            toggle.classList.remove('atlas-settings-pulse');
+        }
+    }
+
+    function maybeStartTour() {
+        if (!tourEnabled || tourSeen()) {
+            return;
+        }
+        // Start after the drawer's open animation so the target is laid out.
+        window.setTimeout(startTour, 320);
+    }
+
+    if (tourEnabled && !tourSeen()) {
+        toggle.classList.add('atlas-settings-pulse');
+    }
 }
 
 // Collapsible cell-type lists inside the embedded atlas. The atlas re-renders

@@ -41,6 +41,333 @@ body {
     min-height: calc(100vh - 48px);
 }
 
+/* ===== Embedded 3D Atlas (native fusion) ===== */
+#atlasSection.atlas-embed--framed {
+    margin-top: 28px;
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 24px;
+    background: var(--panel);
+    box-shadow: 0 18px 48px rgba(28, 52, 66, 0.12);
+    overflow: hidden;
+}
+
+.atlas-embed-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px 24px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-strong);
+}
+
+.atlas-embed-titles {
+    min-width: 260px;
+}
+
+.atlas-embed-titles .header-kicker {
+    display: inline-block;
+    margin-bottom: 6px;
+    padding: 0;
+    background: none;
+    color: var(--accent-strong);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.atlas-embed-titles h2 {
+    margin: 0 0 4px;
+    font-size: 1.3rem;
+    color: var(--text);
+}
+
+.atlas-embed-titles p {
+    margin: 0;
+    max-width: 560px;
+    color: var(--muted);
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+
+.atlas-embed-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.atlas-embed-head .summary-strip {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.atlas-embed-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.atlas-embed-btn {
+    border: 1px solid var(--line-strong);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 11px;
+    padding: 8px 15px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.atlas-embed-btn:hover {
+    border-color: var(--accent);
+    background: rgba(85, 214, 176, 0.12);
+    color: var(--accent-strong);
+}
+
+.atlas-embed-stage {
+    position: relative;
+    height: min(80vh, 880px);
+    min-height: 560px;
+}
+
+.atlas-embed--framed .viewer-panel {
+    position: absolute;
+    inset: 0;
+}
+
+.atlas-embed--framed .control-panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 300px;
+    max-width: 84%;
+    z-index: 6;
+    transform: translateX(-102%);
+    transition: transform 220ms ease;
+    box-shadow: 20px 0 46px rgba(2, 8, 12, 0.5);
+}
+
+.atlas-embed--framed.show-settings .control-panel {
+    transform: translateX(0);
+}
+
+.atlas-embed--framed .detail-panel {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    bottom: 14px;
+    width: 340px;
+    max-width: calc(100% - 28px);
+    z-index: 7;
+    border-radius: 16px;
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 24px 60px rgba(2, 8, 12, 0.55);
+}
+
+.atlas-embed--framed .detail-panel:not(.open) {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    .atlas-embed--framed .detail-panel {
+        width: calc(100% - 28px);
+    }
+}
+
+/* Typography: align the embedded atlas with the dashboard font (drop the
+   atlas's Inter/Georgia mix inside the framed section only; standalone keeps
+   its own type). #atlasSection ids win over the atlas's class rules. */
+#atlasSection,
+#atlasSection button,
+#atlasSection input,
+#atlasSection h1,
+#atlasSection h2,
+#atlasSection h3,
+#atlasSection .brand strong,
+#atlasSection dialog h2,
+#atlasSection dialog h3 {
+    font-family: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+/* About dialog: match the light dashboard, center it, drop the top accent
+   line, and give it a clear top-right close button. Re-declaring the page
+   palette flips every var()-based child rule to the light theme. */
+#atlasSection dialog {
+    --panel: #fbfdfe;
+    --panel-strong: #f4f8fb;
+    --line: #d7e2ea;
+    --line-strong: #bdd0dc;
+    --text: #18242d;
+    --muted: #61717d;
+    --accent: #146c94;
+    --accent-strong: #0f4c68;
+    color-scheme: light;
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    border: none;
+    border-radius: 16px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 24px 60px rgba(28, 52, 66, 0.28);
+}
+
+#atlasSection dialog::backdrop {
+    background: rgba(24, 36, 45, 0.42);
+    backdrop-filter: blur(6px);
+}
+
+#atlasSection dialog form {
+    padding: 22px 24px 20px;
+}
+
+#atlasSection dialog h2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+#atlasSection dialog h3 {
+    color: var(--muted);
+}
+
+#atlasSection dialog p {
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+#atlasSection dialog pre {
+    border: 1px solid var(--line);
+    background: var(--panel-strong);
+    color: var(--accent-strong);
+}
+
+#atlasSection dialog .dialog-close {
+    top: 12px;
+    right: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    background: var(--panel-strong);
+    color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
+}
+
+#atlasSection dialog .dialog-close:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+#atlasSection dialog .primary-button {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+
+/* Collapsible cell-type lists: show ~5 rows, fade the overflow, expand on
+   click. Applied to the control-panel classes, the legend key, and the detail
+   composition list. */
+.atlas-embed--framed .atlas-collapsible {
+    transition: max-height 240ms ease;
+}
+
+.atlas-embed--framed .atlas-collapsible.is-collapsed {
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 58%, transparent 100%);
+}
+
+.atlas-embed--framed .atlas-list-toggle {
+    margin-top: 8px;
+    padding: 2px 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent-strong);
+    font: inherit;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+.atlas-embed--framed .atlas-list-toggle:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+/* The legend overlay is pointer-events:none so canvas drags pass through; the
+   collapse toggle must opt back in to be clickable (task: legend show-all). */
+.atlas-embed--framed .legend .atlas-list-toggle {
+    pointer-events: auto;
+}
+
+/* Cell-class list rows: smaller, panel-consistent size. */
+#atlasSection .cell-type-button {
+    font-size: 10px;
+}
+
+/* Settings drawer close button (top-right of the control panel). */
+.atlas-embed--framed .atlas-panel-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.atlas-embed--framed .atlas-panel-close:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+/* Detail panel: enlarge composition + region-role text one step (task 5),
+   leaving the section titles and the "Curated context" badge untouched. */
+#atlasSection .composition-row {
+    font-size: 9px;
+}
+
+#atlasSection .composition-section .section-heading span {
+    font-size: 8px;
+}
+
+#atlasSection .region-overview {
+    font-size: 10px;
+}
+
+#atlasSection .region-role {
+    font-size: 9.5px;
+}
+
+#atlasSection .function-tags span,
+#atlasSection .network-tags span {
+    font-size: 8px;
+}
+
+
 .header {
     margin-bottom: 24px;
     padding: 4px 0 20px;
@@ -205,6 +532,129 @@ select:focus {
 }
 
 /* Main Content Layout */
+/* ===== Atlas-first view switch (quiet icon+text toggle) ===== */
+.scope-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 14px;
+}
+
+.view-switch-wrap {
+    position: relative;
+}
+
+.view-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.view-switch-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 2px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.86rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.18s ease, border-color 0.18s ease;
+}
+
+.view-switch-btn:hover {
+    color: var(--accent-strong);
+}
+
+.view-switch-btn.is-active {
+    color: var(--accent-strong);
+    border-bottom-color: var(--accent);
+}
+
+.view-switch-icon {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.view-hint {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    z-index: 20;
+    width: 264px;
+    padding: 12px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--panel);
+    box-shadow: 0 16px 40px rgba(28, 52, 66, 0.18);
+    text-align: left;
+}
+
+.view-hint::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    right: 46px;
+    width: 12px;
+    height: 12px;
+    background: var(--panel);
+    border-left: 1px solid var(--line-strong);
+    border-top: 1px solid var(--line-strong);
+    transform: rotate(45deg);
+}
+
+.view-hint p {
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.view-hint strong {
+    color: var(--accent-strong);
+}
+
+.view-hint-dismiss {
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 5px 12px;
+    cursor: pointer;
+}
+
+/* View swap: one content region at a time (atlas is the default). */
+.app-view.is-hidden {
+    display: none;
+}
+
+.app-view:not(.is-hidden) {
+    animation: appViewFade 0.24s ease;
+}
+
+@keyframes appViewFade {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .main-content {
     display: grid;
     grid-template-columns: 1fr 2fr;

@@ -412,3 +412,15 @@ function destroyAllCharts() {
     destroyRegionChart();
     destroyCellTypeChart();
 }
+
+// Re-fit charts to their container. Needed because the overview can be rendered
+// while hidden (the atlas is the default view), which leaves Chart.js canvases
+// sized to 0 until the container becomes visible again.
+function resizeAllCharts() {
+    if (cellTypeChart) {
+        cellTypeChart.resize();
+    }
+    if (regionChart) {
+        regionChart.resize();
+    }
+}

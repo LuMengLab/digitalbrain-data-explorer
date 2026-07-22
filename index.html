@@ -6,6 +6,7 @@
     <title>DigitalBrain Data Explorer - Single-Cell Dataset Explorer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="atlas/styles.css">
 </head>
 <body>
     <div class="container">
@@ -44,23 +45,41 @@
                 <h2 class="scope-title" id="scopeTitle">All Collections</h2>
                 <p class="scope-subtitle" id="scopeSubtitle">Use the filters above to move from collection-level summaries down to donor-specific views.</p>
             </div>
-            <div class="scope-metrics">
-                <div class="scope-chip">
-                    <span>Datasets</span>
-                    <strong id="scopeDatasets">0</strong>
+            <div class="scope-right">
+                <div class="view-switch-wrap">
+                    <div class="view-switch" role="tablist" aria-label="Content view">
+                        <button type="button" class="view-switch-btn is-active" id="viewAtlasBtn" role="tab" aria-selected="true" data-view="atlas">
+                            <svg class="view-switch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                            <span>3D Atlas</span>
+                        </button>
+                        <button type="button" class="view-switch-btn" id="viewOverviewBtn" role="tab" aria-selected="false" data-view="overview">
+                            <svg class="view-switch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"/><path d="M6 21V11"/><path d="M12 21V5"/><path d="M18 21v-7"/></svg>
+                            <span>Overview</span>
+                        </button>
+                    </div>
+                    <div class="view-hint" id="viewHint" hidden role="note">
+                        <p>The 3D atlas is shown first. Switch to <strong>Overview</strong> here for cell-type and brain-region charts.</p>
+                        <button type="button" class="view-hint-dismiss" id="viewHintDismiss">Got it</button>
+                    </div>
                 </div>
-                <div class="scope-chip">
-                    <span>Donors</span>
-                    <strong id="scopeDonors">0</strong>
-                </div>
-                <div class="scope-chip">
-                    <span>Cells</span>
-                    <strong id="scopeCells">0</strong>
+                <div class="scope-metrics">
+                    <div class="scope-chip">
+                        <span>Datasets</span>
+                        <strong id="scopeDatasets">0</strong>
+                    </div>
+                    <div class="scope-chip">
+                        <span>Donors</span>
+                        <strong id="scopeDonors">0</strong>
+                    </div>
+                    <div class="scope-chip">
+                        <span>Cells</span>
+                        <strong id="scopeCells">0</strong>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="main-content">
+        <div class="main-content app-view is-hidden" id="overviewView">
             <div class="left-panel">
                 <div id="collectionOverview" class="overview-card collection-overview hidden">
                     <h3 class="overview-title" id="collectionOverviewTitle">Collection Overview</h3>
@@ -203,12 +222,217 @@
                 </div>
             </div>
         </div>
+
+        <section id="atlasSection" class="atlas-embed atlas-embed--framed app-view">
+            <div class="atlas-embed-head">
+                <div class="atlas-embed-titles">
+                    <span class="header-kicker">Interactive 3D Atlas</span>
+                </div>
+                <div class="atlas-embed-meta">
+                    <div class="dataset-status" id="datasetStatus" role="status">
+                        <span class="status-dot"></span>
+                        <span>Whole-brain cells + Allen 3D anatomy</span>
+                        <strong>105 profiles placed</strong>
+                    </div>
+                    <!-- placed regions / cell classes 概览已按需求移除；保留隐藏计数节点供 atlas 运行时写入。 -->
+                    <div class="atlas-embed-metrics" hidden>
+                        <strong id="visibleCount">105</strong>
+                        <strong id="cellTypeCount">31</strong>
+                        <span id="secondaryCountLabel">cell classes</span>
+                    </div>
+                    <div class="atlas-embed-actions">
+                        <button class="atlas-embed-btn" type="button" id="atlasSettingsToggle" aria-expanded="false" aria-controls="atlasControlPanel">Atlas settings</button>
+                        <button class="atlas-embed-btn" id="aboutButton" type="button">About the atlas</button>
+                        <!-- Import CSV 按钮暂不需要，暂时隐藏；导入功能保留：#csvInput 仍在 DOM 中，需要时恢复此按钮即可。 -->
+                        <input id="csvInput" type="file" accept=".csv,text/csv" hidden />
+                    </div>
+                </div>
+            </div>
+
+            <div class="atlas-embed-stage">
+                <aside class="control-panel" id="atlasControlPanel" aria-label="Visualization controls">
+                    <button type="button" class="atlas-panel-close" id="atlasSettingsClose" aria-label="Close settings">×</button>
+                    <section class="control-section">
+                        <div class="section-heading"><span>Atlas layer</span></div>
+                        <div class="layer-tabs" id="dataLayerTabs" role="group" aria-label="Atlas data layer">
+                            <button type="button" data-layer="cells" class="active">Cell profiles</button>
+                            <button type="button" data-layer="functional">Functional</button>
+                            <button type="button" data-layer="structural">Structural</button>
+                        </div>
+                    </section>
+                    <section class="control-section" id="abundanceSection">
+                        <div class="section-heading"><span>Cell class</span><button class="text-button" id="resetFilters" type="button">Reset</button></div>
+                        <div class="cell-type-list" id="cellTypeList"></div>
+                    </section>
+                    <section class="control-section" id="atlasSearchSection">
+                        <label class="field-label" for="regionSearch">Search the atlas</label>
+                        <div class="search-field">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+                            <input id="regionSearch" type="search" placeholder="Region, connection, or function" autocomplete="off" />
+                        </div>
+                        <div class="search-results" id="searchResults" hidden></div>
+                        <p class="control-footnote">Try “memory”, “DMN”, “A23 A32”, or a region name.</p>
+                        <div class="function-focus" id="functionFocus" hidden>
+                            <div><small>Functional focus</small><strong id="functionFocusLabel">Memory</strong><span id="functionFocusSummary">—</span></div>
+                            <button id="clearFunctionFocus" type="button" aria-label="Clear functional focus">×</button>
+                        </div>
+                    </section>
+                    <section class="control-section" id="abundanceFilterSection">
+                        <div class="section-heading"><label for="abundanceFilter">Minimum abundance</label><output id="abundanceValue" for="abundanceFilter">0%</output></div>
+                        <input class="range-input" id="abundanceFilter" type="range" min="0" max="50" step="1" value="0" />
+                        <div class="range-labels"><span>All</span><span>50%</span></div>
+                    </section>
+                    <section class="control-section" id="connectivitySection" hidden>
+                        <div class="section-heading"><label for="connectivityFilter">Connection threshold</label><output id="connectivityValue" for="connectivityFilter">Top 4%</output></div>
+                        <input class="range-input connectivity-range" id="connectivityFilter" type="range" min="90" max="99" step="1" value="96" />
+                        <div class="range-labels"><span>Top 10%</span><span>Top 1%</span></div>
+                        <p class="control-footnote">55 regions shared by the FC and SC matrices</p>
+                        <div class="toggle-row connectivity-toggle-row">
+                            <span><strong>Label DMN nodes</strong><small>Core and associated nodes in this atlas vocabulary</small></span>
+                            <label class="switch"><input id="dmnToggle" type="checkbox" checked /><span></span></label>
+                        </div>
+                    </section>
+                    <section class="control-section">
+                        <div class="section-heading"><span>Anatomy style</span></div>
+                        <div class="layer-tabs anatomy-style-tabs" id="anatomyStyleTabs" role="group" aria-label="Anatomy rendering style">
+                            <button type="button" data-anatomy-style="flecks">Tiny flecks</button>
+                            <button type="button" data-anatomy-style="boundaries" class="active">Boundaries</button>
+                        </div>
+                    </section>
+                    <section class="control-section compact">
+                        <div class="toggle-row"><span><strong>3D anatomy</strong><small>Official Allen voxel geometry</small></span><label class="switch"><input id="shellToggle" type="checkbox" checked /><span></span></label></div>
+                        <div class="toggle-row"><span><strong>Auto-rotate</strong><small>Pause automatically on selection</small></span><label class="switch"><input id="rotateToggle" type="checkbox" /><span></span></label></div>
+                    </section>
+                    <section class="data-note">
+                        <span class="note-icon">i</span>
+                        <p>Anatomy is derived from the Allen Human Reference Atlas – 3D, 2020. When linked to a selection, only sampled regions are shown (sized by cell count); composition is scope-level (marginal), not region-resolved.</p>
+                    </section>
+                </aside>
+
+                <section class="viewer-panel" aria-label="Interactive brain atlas visualization">
+                    <div class="viewer-toolbar">
+                        <div class="viewer-nav">
+                            <div class="mode-tabs" role="group" aria-label="Visualization mode">
+                                <button type="button" data-mode="anatomy" hidden>3D anatomy</button>
+                                <button type="button" data-mode="three-d" class="active">3D atlas</button>
+                            </div>
+                            <div class="view-tabs" id="threeDViewTabs" role="group" aria-label="Preset 3D views" hidden>
+                                <button type="button" data-view="lateral" class="active">Lateral</button>
+                                <button type="button" data-view="dorsal">Dorsal</button>
+                                <button type="button" data-view="anterior">Anterior</button>
+                            </div>
+                        </div>
+                        <div class="viewer-actions" id="threeDViewerActions" hidden>
+                            <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
+                            <button id="zoomReset" type="button" aria-label="Reset view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"></path><path d="M4 4v4.6h4.6"></path></svg></button>
+                            <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+                        </div>
+                    </div>
+                    <div class="geometry-status available" id="geometryStatus" role="status"><span></span>Fixed 3D anchors · 141 anatomy parcels · 105/106 profiles placed</div>
+                    <div class="anatomy-view" id="anatomyView" hidden>
+                        <div class="anatomy-stage" id="anatomyStage">
+                            <svg id="anatomySvg" viewBox="0 0 860 620" role="img" aria-label="Schematic anatomy"><g class="anatomy-regions"></g><g class="anatomy-metrics"></g></svg>
+                        </div>
+                        <button id="anatomyReset" type="button" hidden>Reset tilt</button>
+                    </div>
+                    <canvas id="brainCanvas" aria-label="Rotatable Allen 3D anatomical atlas with DigitalBrain cell overlays"></canvas>
+                    <div class="canvas-empty" id="canvasEmpty" hidden>No regions match the current filters.</div>
+                    <div class="tooltip" id="tooltip" hidden></div>
+                    <div class="orientation-cue" aria-hidden="true"><span class="axis-v">S</span><span class="axis-h">A</span><i></i></div>
+                    <div class="legend" id="legend">
+                        <div id="legendSingle">
+                            <div class="legend-heading"><span id="legendTitle">Excitatory neuron</span><strong id="legendRange">12–52%</strong></div>
+                            <div class="legend-ramp"></div>
+                            <div class="legend-labels"><span>Lower</span><span>Relative abundance</span><span>Higher</span></div>
+                        </div>
+                        <div id="legendAll" hidden>
+                            <div class="legend-heading"><span>All cell types</span><strong>Within-region composition</strong></div>
+                            <div class="legend-key" id="legendKey"></div>
+                        </div>
+                        <div id="legendConnectivity" hidden>
+                            <div class="legend-heading"><span id="connectivityLegendTitle">Functional connectivity</span><strong id="connectivityLegendThreshold">Top 4%</strong></div>
+                            <div class="connectivity-ramp" aria-label="Rainbow connection-strength colour scale"></div>
+                            <div class="legend-labels connectivity-percentile-labels"><span id="connectivityLegendMinPercentile">P96</span><span>Within-matrix percentile</span><span>P100</span></div>
+                            <div class="connectivity-value-labels"><span id="connectivityLegendMinValue">≥ 0.389</span><span id="connectivityLegendMaxValue">3.800</span></div>
+                            <div class="connectivity-edge-count" id="connectivityEdgeCount">— links</div>
+                            <div class="connectivity-visual-key"><span><i class="dmn-node"></i>DMN node</span><span><i class="function-edge"></i>Function-focused link</span></div>
+                        </div>
+                        <div class="visual-key" id="visualKey" aria-label="Visual encoding"><span><i class="anatomy"></i>Anatomy parcel</span><span><i class="boundary"></i>Parcel boundary</span><span><i class="profile"></i>Cell profile</span></div>
+                        <div class="mapping-key" id="mappingKey" aria-label="Anatomical mapping confidence"><span><i class="exact"></i>Exact anatomy</span><span><i class="proxy"></i>Broad anatomical proxy</span></div>
+                    </div>
+                    <div class="interaction-hint"><span class="mouse-icon" aria-hidden="true"></span><span id="interactionHintText">Drag to rotate anatomy · Scroll to zoom · Click a cell-profile marker</span></div>
+                </section>
+
+                <aside class="detail-panel" aria-label="Selected region details">
+                    <div class="detail-empty" id="detailEmpty">
+                        <div class="selection-orbit" aria-hidden="true"><span></span></div>
+                        <h2>Select a region</h2>
+                        <p>Select a mapped parcel to inspect its anatomical support and cell-class profile.</p>
+                    </div>
+                    <div class="detail-content" id="detailContent" hidden>
+                        <div class="detail-heading"><span class="region-code" id="detailCode">—</span><button id="closeDetail" type="button" aria-label="Clear selected region">×</button></div>
+                        <h2 id="detailName">—</h2>
+                        <p class="detail-group" id="detailGroup">—</p>
+                        <div class="focus-stat"><span class="focus-swatch" id="focusSwatch"></span><div><small id="focusLabel">Excitatory neuron</small><strong id="focusValue">—</strong></div><span class="rank-badge" id="rankBadge">—</span></div>
+                        <section class="region-annotation-section" id="regionAnnotationSection" hidden>
+                            <div class="section-heading"><h3>Region role and functions</h3><span id="regionNetworkBadge">Curated context</span></div>
+                            <p class="region-overview" id="regionOverview">—</p>
+                            <p class="region-role" id="regionRole">—</p>
+                            <div class="function-tags" id="regionFunctionTags"></div>
+                            <div class="network-tags" id="regionNetworkTags"></div>
+                        </section>
+                        <section class="composition-section" id="compositionSection">
+                            <div class="section-heading"><h3>Cell-class composition</h3><span>Relative proportion</span></div>
+                            <div class="composition-bars" id="compositionBars"></div>
+                        </section>
+                        <section class="member-regions-section" id="memberRegionsSection" hidden>
+                            <div class="section-heading"><h3>Member regions</h3><span id="memberRegionsCount">—</span></div>
+                            <div class="member-region-list" id="memberRegionList"></div>
+                        </section>
+                        <section class="connectivity-detail-section" id="connectivityDetailSection" hidden>
+                            <div class="section-heading"><h3 id="connectivityDetailTitle">Strongest connections</h3><span id="connectivityDetailUnit">Weight</span></div>
+                            <div class="connectivity-detail-list" id="connectivityDetailList"></div>
+                        </section>
+                        <section class="connection-insight-section" id="connectionInsightSection" hidden>
+                            <div class="section-heading"><h3>Selected connection</h3><span id="connectionInsightLayer">FC</span></div>
+                            <div class="connection-pair" id="connectionPair">—</div>
+                            <dl class="connection-metrics"><div><dt id="connectionWeightLabel">fMRI FC weight</dt><dd id="connectionWeight">—</dd></div><div><dt>Matrix percentile</dt><dd id="connectionPercentile">—</dd></div></dl>
+                            <p id="connectionExplanation">—</p>
+                            <p class="annotation-caveat">Descriptive association only; no direction or causality is implied.</p>
+                        </section>
+                        <section class="context-section">
+                            <h3>Atlas context</h3>
+                            <dl><div><dt>Region universe</dt><dd>Table 2 hierarchy</dd></div><div><dt>Spatial layout</dt><dd id="detailGeometryStatus">Allen 3D mapping</dd></div><div><dt>Mapping basis</dt><dd id="detailMappingBasis">—</dd></div><div><dt>Data status</dt><dd id="detailDataStatus">Illustrative</dd></div></dl>
+                        </section>
+                    </div>
+                </aside>
+            </div>
+
+            <dialog id="aboutDialog">
+                <form method="dialog">
+                    <button class="dialog-close" aria-label="Close">×</button>
+                    <p class="eyebrow">Data and interpretation</p>
+                    <h2>A scientifically cautious prototype</h2>
+                    <p>Region identities come from the 106-region DigitalBrain hierarchy. When linked to a Data Explorer selection, sampled regions are matched on the Brodmann axis and sized by real per-region cell counts.</p>
+                    <p>Cell-type composition uses the Data Explorer's original taxonomy. Because the source data stores only marginal distributions (region totals and cell-type totals, not a joint region × cell-type matrix), the per-region composition shown is scope-level, not region-resolved.</p>
+                    <p>Functional and structural connectivity are read from the project's 55-region FC and SC matrices; links are undirected and descriptively thresholded by matrix percentile.</p>
+                    <button class="primary-button" value="close">Understood</button>
+                </form>
+            </dialog>
+            <div class="toast" id="toast" role="status" aria-live="polite"></div>
+        </section>
     </div>
 
     <script src="digitalneuron_data.js"></script>
     <script src="data-model.js"></script>
     <script src="ui.js"></script>
     <script src="charts.js"></script>
+    <script src="atlas-bridge.js"></script>
+    <script src="atlas/data/regions.js"></script>
+    <script src="atlas/data/allen_3d_geometry.js"></script>
+    <script src="atlas/data/connectivity.js"></script>
+    <script src="atlas/data/atlas_knowledge.js"></script>
+    <script src="atlas/app.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

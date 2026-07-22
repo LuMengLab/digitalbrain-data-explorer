@@ -1152,7 +1152,12 @@ function updateView(collectionId, datasetId, donorId) {
     hideAllSections();
 
     const globalScope = getScopeState('', '', '');
-    renderScopeBanner(getScopeState(collectionId, datasetId, donorId));
+    const selectedScope = getScopeState(collectionId, datasetId, donorId);
+    renderScopeBanner(selectedScope);
+
+    if (window.AtlasBridge) {
+        window.AtlasBridge.sync(selectedScope, { collectionId, datasetId, donorId });
+    }
 
     if (!collectionId) {
         renderCollectionOverview(globalScope, 'Global Overview');

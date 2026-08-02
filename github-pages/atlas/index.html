@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Interactive 3D viewer for exploring cell-type composition across DigitalBrain regions."
+    />
+    <title>DigitalBrain Atlas Explorer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell atlas-embed atlas-embed--standalone">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="DigitalBrain Atlas Explorer home">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </span>
+          <span>
+            <strong>DigitalBrain</strong>
+            <small>Atlas Explorer</small>
+          </span>
+        </a>
+
+        <div class="dataset-status" id="datasetStatus" role="status">
+          <span class="status-dot"></span>
+          <span>Whole-brain cells + Allen 3D anatomy</span>
+          <strong>105 profiles placed</strong>
+        </div>
+
+        <div class="top-actions">
+          <button class="quiet-button" id="aboutButton" type="button">About the data</button>
+          <label class="import-button" for="csvInput">
+            Import CSV
+            <input id="csvInput" type="file" accept=".csv,text/csv" />
+          </label>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="control-panel" aria-label="Visualization controls">
+          <section class="intro">
+            <p class="eyebrow">Whole-brain multimodal atlas</p>
+            <h1>Explore cells and connectivity across anatomy</h1>
+            <p>
+              Rotate one integrated 3D atlas: real anatomical parcels provide the
+              structure, while mapped regions carry cell profiles, functional
+              connectivity and structural connectivity.
+            </p>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading">
+              <span>Atlas layer</span>
+            </div>
+            <div class="layer-tabs" id="dataLayerTabs" role="group" aria-label="Atlas data layer">
+              <button type="button" data-layer="cells" class="active">Cell profiles</button>
+              <button type="button" data-layer="functional">Functional</button>
+              <button type="button" data-layer="structural">Structural</button>
+            </div>
+          </section>
+
+          <section class="control-section" id="abundanceSection">
+            <div class="section-heading">
+              <span>Cell class</span>
+              <button class="text-button" id="resetFilters" type="button">Reset</button>
+            </div>
+            <div class="cell-type-list" id="cellTypeList"></div>
+          </section>
+
+          <section class="control-section" id="atlasSearchSection">
+            <label class="field-label" for="regionSearch">Search the atlas</label>
+            <div class="search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="11" cy="11" r="6"></circle>
+                <path d="m16 16 4 4"></path>
+              </svg>
+              <input
+                id="regionSearch"
+                type="search"
+                placeholder="Region, connection, or function"
+                autocomplete="off"
+              />
+            </div>
+            <div class="search-results" id="searchResults" hidden></div>
+            <p class="control-footnote">Try “memory”, “DMN”, “A23 A32”, or a region name.</p>
+            <div class="function-focus" id="functionFocus" hidden>
+              <div>
+                <small>Functional focus</small>
+                <strong id="functionFocusLabel">Memory</strong>
+                <span id="functionFocusSummary">—</span>
+              </div>
+              <button id="clearFunctionFocus" type="button" aria-label="Clear functional focus">×</button>
+            </div>
+          </section>
+
+          <section class="control-section" id="abundanceFilterSection">
+            <div class="section-heading">
+              <label for="abundanceFilter">Minimum abundance</label>
+              <output id="abundanceValue" for="abundanceFilter">0%</output>
+            </div>
+            <input
+              class="range-input"
+              id="abundanceFilter"
+              type="range"
+              min="0"
+              max="50"
+              step="1"
+              value="0"
+            />
+            <div class="range-labels"><span>All</span><span>50%</span></div>
+          </section>
+
+          <section class="control-section" id="connectivitySection" hidden>
+            <div class="section-heading">
+              <label for="connectivityFilter">Connection threshold</label>
+              <output id="connectivityValue" for="connectivityFilter">Top 4%</output>
+            </div>
+            <input
+              class="range-input connectivity-range"
+              id="connectivityFilter"
+              type="range"
+              min="90"
+              max="99"
+              step="1"
+              value="96"
+            />
+            <div class="range-labels"><span>Top 10%</span><span>Top 1%</span></div>
+            <p class="control-footnote">55 regions shared by the FC and SC matrices</p>
+            <div class="toggle-row connectivity-toggle-row">
+              <span>
+                <strong>Label DMN nodes</strong>
+                <small>Core and associated nodes in this atlas vocabulary</small>
+              </span>
+              <label class="switch">
+                <input id="dmnToggle" type="checkbox" checked />
+                <span></span>
+              </label>
+            </div>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading">
+              <span>Anatomy style</span>
+            </div>
+            <div class="layer-tabs anatomy-style-tabs" id="anatomyStyleTabs" role="group" aria-label="Anatomy rendering style">
+              <button type="button" data-anatomy-style="flecks">Tiny flecks</button>
+              <button type="button" data-anatomy-style="boundaries" class="active">Boundaries</button>
+            </div>
+          </section>
+
+          <section class="control-section compact">
+            <div class="toggle-row">
+              <span>
+                <strong>3D anatomy</strong>
+                <small>Official Allen voxel geometry</small>
+              </span>
+              <label class="switch">
+                <input id="shellToggle" type="checkbox" checked />
+                <span></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span>
+                <strong>Auto-rotate</strong>
+                <small>Pause automatically on selection</small>
+              </span>
+              <label class="switch">
+                <input id="rotateToggle" type="checkbox" />
+                <span></span>
+              </label>
+            </div>
+          </section>
+
+          <section class="data-note">
+            <span class="note-icon">i</span>
+            <p>
+              Anatomy is derived from the Allen Human Reference Atlas – 3D, 2020.
+              Cell profiles remain demonstrative until an abundance table is
+              imported. Exact parcels and explicitly documented broad anatomical proxies are
+              distinguished in region details. FC and SC links use the project’s
+              observed 55-region matrices and percentile thresholds.
+            </p>
+          </section>
+        </aside>
+
+        <section class="viewer-panel" aria-label="Interactive brain atlas visualization">
+          <div class="viewer-toolbar">
+            <div class="viewer-nav">
+              <div class="mode-tabs" role="group" aria-label="Visualization mode">
+                <button type="button" data-mode="anatomy" hidden>3D anatomy</button>
+                <button type="button" data-mode="three-d" class="active">3D atlas</button>
+              </div>
+              <div class="view-tabs" id="threeDViewTabs" role="group" aria-label="Preset 3D views" hidden>
+                <button type="button" data-view="lateral" class="active">Lateral</button>
+                <button type="button" data-view="dorsal">Dorsal</button>
+                <button type="button" data-view="anterior">Anterior</button>
+              </div>
+            </div>
+            <div class="viewer-actions" id="threeDViewerActions" hidden>
+              <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
+              <button id="zoomReset" type="button" aria-label="Reset view">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"></path>
+                  <path d="M4 4v4.6h4.6"></path>
+                </svg>
+              </button>
+              <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+            </div>
+          </div>
+
+          <div class="geometry-status available" id="geometryStatus" role="status">
+            <span></span>
+            Fixed 3D anchors · 141 anatomy parcels · 105/106 profiles placed
+          </div>
+
+          <div class="anatomy-view" id="anatomyView" hidden>
+            <div class="anatomy-caption">
+              <span>Interactive sagittal cutaway</span>
+              <strong>Drag to tilt · select a coloured structure to inspect its regions</strong>
+              <button id="anatomyReset" type="button">Reset tilt</button>
+            </div>
+            <div class="anatomy-stage" id="anatomyStage">
+              <svg
+                id="anatomySvg"
+                viewBox="0 0 860 620"
+                role="img"
+                aria-label="Interactive schematic three-dimensional mid-sagittal brain anatomy"
+              >
+              <defs>
+                <filter id="anatomyGlow" x="-30%" y="-30%" width="160%" height="160%">
+                  <feGaussianBlur stdDeviation="4" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+
+              <g class="anatomy-regions">
+                <g class="anatomy-region" data-group="Cerebral cortex" tabindex="0" role="button" aria-label="Cerebral cortex">
+                  <path
+                    class="anatomy-shape"
+                    fill-rule="evenodd"
+                    d="M104 314 C69 235 96 151 190 102 C290 50 461 48 593 86 C722 123 798 205 790 313 C784 411 712 465 620 463 C548 462 512 428 464 407 C402 379 350 388 284 421 C210 458 128 421 104 314 Z M238 299 C238 221 309 166 414 164 C518 162 604 206 626 279 C645 344 599 385 535 389 C474 392 431 354 368 360 C306 366 249 349 238 299 Z"
+                  />
+                  <path class="anatomy-gyrus" d="M142 248 C179 196 230 171 285 161" />
+                  <path class="anatomy-gyrus" d="M287 92 C325 122 326 154 306 184" />
+                  <path class="anatomy-gyrus" d="M411 73 C392 111 405 143 440 166" />
+                  <path class="anatomy-gyrus" d="M532 80 C513 119 529 151 562 176" />
+                  <path class="anatomy-gyrus" d="M659 126 C625 157 626 193 660 218" />
+                  <path class="anatomy-gyrus" d="M743 232 C703 250 691 284 711 316" />
+                  <path class="anatomy-gyrus" d="M702 394 C660 365 626 373 604 410" />
+                  <path class="anatomy-gyrus" d="M201 398 C230 369 232 338 210 312" />
+                </g>
+
+                <g class="anatomy-region" data-group="Limbic / olfactory" tabindex="0" role="button" aria-label="Limbic and olfactory structures">
+                  <path
+                    class="anatomy-shape"
+                    d="M207 321 C187 259 214 204 285 170 C371 129 501 140 594 194 C647 225 680 273 658 310 C643 337 610 341 584 310 C536 253 472 225 393 227 C322 229 278 260 268 309 C261 344 220 356 207 321 Z"
+                  />
+                  <path
+                    class="anatomy-shape"
+                    d="M119 351 C143 330 176 329 199 347 C219 363 216 388 194 400 C166 415 132 401 111 380 C102 370 106 360 119 351 Z"
+                  />
+                </g>
+
+                <g class="anatomy-region" data-group="Basal ganglia" tabindex="0" role="button" aria-label="Basal ganglia">
+                  <path
+                    class="anatomy-shape"
+                    d="M316 238 C342 215 388 211 420 232 C444 248 441 273 416 286 C385 303 338 293 315 271 C304 260 305 248 316 238 Z"
+                  />
+                </g>
+
+                <g class="anatomy-region" data-group="Thalamus" tabindex="0" role="button" aria-label="Thalamus">
+                  <path
+                    class="anatomy-shape"
+                    d="M381 275 C407 244 464 239 501 265 C537 291 537 331 504 357 C469 385 412 378 381 346 C359 323 359 299 381 275 Z"
+                  />
+                </g>
+
+                <g class="anatomy-region" data-group="Hypothalamus" tabindex="0" role="button" aria-label="Hypothalamus">
+                  <path
+                    class="anatomy-shape"
+                    d="M386 350 C410 339 448 344 463 365 C477 385 460 405 434 409 C405 413 376 397 374 376 C373 365 377 355 386 350 Z"
+                  />
+                </g>
+
+                <g class="anatomy-region" data-group="Hippocampal formation" tabindex="0" role="button" aria-label="Hippocampal formation">
+                  <path
+                    class="anatomy-shape"
+                    d="M290 345 C330 318 374 306 423 311 C469 316 502 335 527 360 C542 376 534 396 514 399 C487 402 469 379 443 368 C400 349 354 357 319 381 C299 394 276 378 278 359 C279 353 283 349 290 345 Z"
+                  />
+                </g>
+
+                <g class="anatomy-region" data-group="Other subcortical" tabindex="0" role="button" aria-label="Other subcortical regions">
+                  <path
+                    class="anatomy-shape"
+                    d="M517 302 C542 278 583 280 606 307 C625 330 615 361 589 373 C559 387 520 370 507 344 C500 330 503 316 517 302 Z"
+                  />
+                </g>
+
+                <g class="anatomy-region" data-group="Brainstem" tabindex="0" role="button" aria-label="Brainstem">
+                  <path
+                    class="anatomy-shape"
+                    d="M450 388 C476 370 517 377 535 402 C550 423 544 452 530 477 C514 506 512 546 509 590 L429 590 C430 545 429 500 420 467 C412 437 416 411 432 397 C438 392 444 390 450 388 Z"
+                  />
+                  <path class="anatomy-detail" d="M454 432 C480 443 501 443 527 430" />
+                  <path class="anatomy-detail" d="M448 482 C471 490 491 489 515 479" />
+                </g>
+
+                <g class="anatomy-region" data-group="Cerebellum" tabindex="0" role="button" aria-label="Cerebellum">
+                  <path
+                    class="anatomy-shape"
+                    d="M546 393 C577 350 643 347 690 378 C739 410 757 472 731 523 C704 577 628 596 573 565 C533 543 510 499 520 455 C525 430 534 408 546 393 Z"
+                  />
+                  <path class="anatomy-detail" d="M558 414 C603 386 671 397 707 434" />
+                  <path class="anatomy-detail" d="M536 447 C590 421 677 432 725 476" />
+                  <path class="anatomy-detail" d="M532 481 C584 458 672 470 715 513" />
+                  <path class="anatomy-detail" d="M549 520 C595 503 657 513 687 548" />
+                </g>
+              </g>
+
+              <g class="anatomy-label-layer" aria-hidden="true">
+                <text class="anatomy-label" x="166" y="128">CEREBRAL CORTEX</text>
+                <text class="anatomy-label" x="327" y="187">LIMBIC / OLFACTORY</text>
+                <text class="anatomy-label small" x="329" y="254">BASAL GANGLIA</text>
+                <text class="anatomy-label small" x="409" y="316">THALAMUS</text>
+                <text class="anatomy-label small" x="385" y="434">HYPOTHALAMUS</text>
+                <path class="anatomy-leader" d="M339 380 L287 420 L222 420" />
+                <text class="anatomy-label small" x="130" y="424">HIPPOCAMPAL FORMATION</text>
+                <path class="anatomy-leader" d="M569 348 L635 323 L700 323" />
+                <text class="anatomy-label small" x="704" y="327">OTHER SUBCORTICAL</text>
+                <text class="anatomy-label small" x="433" y="535">BRAINSTEM</text>
+                <text class="anatomy-label" x="595" y="487">CEREBELLUM</text>
+              </g>
+
+              <g class="anatomy-metrics" aria-hidden="true">
+                <g class="anatomy-metric" data-metric-group="Cerebral cortex" transform="translate(694 188)"></g>
+                <g class="anatomy-metric" data-metric-group="Limbic / olfactory" transform="translate(249 225)"></g>
+                <g class="anatomy-metric" data-metric-group="Basal ganglia" transform="translate(352 271)"></g>
+                <g class="anatomy-metric" data-metric-group="Thalamus" transform="translate(467 320)"></g>
+                <g class="anatomy-metric" data-metric-group="Hypothalamus" transform="translate(430 382)"></g>
+                <g class="anatomy-metric" data-metric-group="Hippocampal formation" transform="translate(475 372)"></g>
+                <g class="anatomy-metric" data-metric-group="Other subcortical" transform="translate(573 337)"></g>
+                <g class="anatomy-metric" data-metric-group="Brainstem" transform="translate(474 454)"></g>
+                <g class="anatomy-metric" data-metric-group="Cerebellum" transform="translate(650 446)"></g>
+              </g>
+              </svg>
+            </div>
+            <div class="anatomy-footnote">
+              Broad 3D orientation map · Select a structure for its member regions · Not a stereotaxic atlas
+            </div>
+          </div>
+
+          <canvas
+            id="brainCanvas"
+            aria-label="Rotatable Allen 3D anatomical atlas with DigitalBrain cell overlays"
+          ></canvas>
+          <div class="canvas-empty" id="canvasEmpty" hidden>
+            No regions match the current filters.
+          </div>
+          <div class="tooltip" id="tooltip" hidden></div>
+
+          <div class="orientation-cue" aria-hidden="true">
+            <span class="axis-v">S</span>
+            <span class="axis-h">A</span>
+            <i></i>
+          </div>
+
+          <div class="legend" id="legend">
+            <div id="legendSingle">
+              <div class="legend-heading">
+                <span id="legendTitle">Excitatory neuron</span>
+                <strong id="legendRange">12–52%</strong>
+              </div>
+              <div class="legend-ramp"></div>
+              <div class="legend-labels"><span>Lower</span><span>Relative abundance</span><span>Higher</span></div>
+            </div>
+            <div id="legendAll" hidden>
+              <div class="legend-heading">
+                <span>All cell types</span>
+                <strong>Within-region composition</strong>
+              </div>
+              <div class="legend-key" id="legendKey"></div>
+            </div>
+            <div id="legendConnectivity" hidden>
+              <div class="legend-heading">
+                <span id="connectivityLegendTitle">Functional connectivity</span>
+                <strong id="connectivityLegendThreshold">Top 4%</strong>
+              </div>
+              <div class="connectivity-ramp" aria-label="Rainbow connection-strength colour scale"></div>
+              <div class="legend-labels connectivity-percentile-labels">
+                <span id="connectivityLegendMinPercentile">P96</span>
+                <span>Within-matrix percentile</span>
+                <span>P100</span>
+              </div>
+              <div class="connectivity-value-labels">
+                <span id="connectivityLegendMinValue">≥ 0.389</span>
+                <span id="connectivityLegendMaxValue">3.800</span>
+              </div>
+              <div class="connectivity-edge-count" id="connectivityEdgeCount">— links</div>
+              <div class="connectivity-visual-key">
+                <span><i class="dmn-node"></i>DMN node</span>
+                <span><i class="function-edge"></i>Function-focused link</span>
+              </div>
+            </div>
+            <div class="visual-key" id="visualKey" aria-label="Visual encoding">
+              <span><i class="anatomy"></i>Anatomy parcel</span>
+              <span><i class="boundary"></i>Parcel boundary</span>
+              <span><i class="profile"></i>Cell profile</span>
+            </div>
+            <div class="mapping-key" id="mappingKey" aria-label="Anatomical mapping confidence">
+              <span><i class="exact"></i>Exact anatomy</span>
+              <span><i class="proxy"></i>Broad anatomical proxy</span>
+            </div>
+          </div>
+
+          <div class="interaction-hint">
+            <span class="mouse-icon" aria-hidden="true"></span>
+            <span id="interactionHintText">Drag to rotate anatomy · Scroll to zoom · Click a cell-profile marker</span>
+          </div>
+        </section>
+
+        <aside class="detail-panel" aria-label="Selected region details">
+          <div class="detail-empty" id="detailEmpty">
+            <div class="selection-orbit" aria-hidden="true"><span></span></div>
+            <h2>Select a region</h2>
+            <p>Select a mapped parcel to inspect its anatomical support and cell-class profile.</p>
+          </div>
+
+          <div class="detail-content" id="detailContent" hidden>
+            <div class="detail-heading">
+              <span class="region-code" id="detailCode">—</span>
+              <button id="closeDetail" type="button" aria-label="Clear selected region">×</button>
+            </div>
+            <h2 id="detailName">—</h2>
+            <p class="detail-group" id="detailGroup">—</p>
+
+            <div class="focus-stat">
+              <span class="focus-swatch" id="focusSwatch"></span>
+              <div>
+                <small id="focusLabel">Excitatory neuron</small>
+                <strong id="focusValue">—</strong>
+              </div>
+              <span class="rank-badge" id="rankBadge">—</span>
+            </div>
+
+            <section class="composition-section" id="compositionSection">
+              <div class="section-heading">
+                <h3>Cell-class composition</h3>
+                <span>Relative proportion</span>
+              </div>
+              <div class="composition-bars" id="compositionBars"></div>
+            </section>
+
+            <section class="member-regions-section" id="memberRegionsSection" hidden>
+              <div class="section-heading">
+                <h3>Member regions</h3>
+                <span id="memberRegionsCount">—</span>
+              </div>
+              <div class="member-region-list" id="memberRegionList"></div>
+            </section>
+
+            <section class="connectivity-detail-section" id="connectivityDetailSection" hidden>
+              <div class="section-heading">
+                <h3 id="connectivityDetailTitle">Strongest connections</h3>
+                <span id="connectivityDetailUnit">Weight</span>
+              </div>
+              <div class="connectivity-detail-list" id="connectivityDetailList"></div>
+            </section>
+
+            <section class="region-annotation-section" id="regionAnnotationSection" hidden>
+              <div class="section-heading">
+                <h3>Region role and functions</h3>
+                <span id="regionNetworkBadge">Curated context</span>
+              </div>
+              <p class="region-overview" id="regionOverview">—</p>
+              <p class="region-role" id="regionRole">—</p>
+              <div class="function-tags" id="regionFunctionTags"></div>
+              <div class="network-tags" id="regionNetworkTags"></div>
+            </section>
+
+            <section class="connection-insight-section" id="connectionInsightSection" hidden>
+              <div class="section-heading">
+                <h3>Selected connection</h3>
+                <span id="connectionInsightLayer">FC</span>
+              </div>
+              <div class="connection-pair" id="connectionPair">—</div>
+              <dl class="connection-metrics">
+                <div><dt id="connectionWeightLabel">fMRI FC weight</dt><dd id="connectionWeight">—</dd></div>
+                <div><dt>Matrix percentile</dt><dd id="connectionPercentile">—</dd></div>
+              </dl>
+              <p id="connectionExplanation">—</p>
+              <p class="annotation-caveat">Descriptive association only; no direction or causality is implied.</p>
+            </section>
+
+            <section class="context-section">
+              <h3>Atlas context</h3>
+              <dl>
+                <div><dt>Region universe</dt><dd>Table 2 hierarchy</dd></div>
+                <div><dt>Spatial layout</dt><dd id="detailGeometryStatus">Allen 3D mapping</dd></div>
+                <div><dt>Mapping basis</dt><dd id="detailMappingBasis">—</dd></div>
+                <div><dt>Data status</dt><dd id="detailDataStatus">Illustrative</dd></div>
+              </dl>
+            </section>
+          </div>
+
+          <div class="summary-strip">
+            <div><strong id="visibleCount">105</strong><span>placed regions</span></div>
+            <div><strong id="cellTypeCount">7</strong><span id="secondaryCountLabel">cell classes</span></div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="aboutDialog">
+      <form method="dialog">
+        <button class="dialog-close" aria-label="Close">×</button>
+        <p class="eyebrow">Data and interpretation</p>
+        <h2>A scientifically cautious prototype</h2>
+        <p>
+          The region identities come from the 106-region DigitalBrain hierarchy
+          used in the regional analysis. The broader atlas contains 165 harmonized
+          region labels.
+        </p>
+        <p>
+          The built-in cell-class proportions are deterministic illustrative
+          values, included so the interaction can be evaluated before the final
+          abundance matrix is connected. They are not manuscript results.
+        </p>
+        <p>
+          Functional and structural connectivity are read from the project’s
+          55-region FC and SC matrices. Connectivity links are undirected,
+          descriptively thresholded by matrix percentile and should not be
+          interpreted as causal pathways.
+        </p>
+        <p>
+          Rainbow link hue encodes within-matrix connection-strength percentile.
+          Region functions, DMN membership and connection explanations are curated
+          orientation annotations; they are not inferred from the displayed matrix
+          and are not subject-specific network assignments.
+        </p>
+        <p>
+          Region markers use fixed atlas-space anchors. Cell profiles are shown
+          bilaterally; the non-lateralized FC/SC matrices use one fixed
+          canonical-hemisphere anchor per region. Rotation changes only the
+          viewpoint, never which nodes or links exist.
+        </p>
+        <p>
+          Anatomy comes from the bilateral 0.5-mm Allen Human Reference Atlas –
+          3D, 2020 annotation volume (141 voxel labels). The 106 analysis labels
+          are hierarchical and overlapping. Forty-nine labels have exact or
+          union-of-descendant geometry. Another 56 profiles are displayed on
+          curated coarse or gyral proxies so cortex, hippocampus and brainstem
+          remain visible; their details explicitly identify that lower mapping
+          precision. The spinal-cord label is outside this brain volume.
+        </p>
+        <h3>Import format</h3>
+        <pre>region,cell_type,proportion
+DGC,Excitatory neuron,0.62
+DGC,Astrocyte,0.14</pre>
+        <p>
+          Values may be fractions (0–1) or percentages (0–100). Each region is
+          normalized after import. Region labels must match a displayed acronym.
+        </p>
+        <button class="primary-button" value="close">Understood</button>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="data/regions.js"></script>
+    <script src="data/allen_3d_geometry.js"></script>
+    <script src="data/connectivity.js"></script>
+    <script src="data/atlas_knowledge.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

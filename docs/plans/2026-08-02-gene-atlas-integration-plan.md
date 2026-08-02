@@ -132,13 +132,37 @@ git commit -m "chore: add jsdom test dependency and package manifest"
 
 ---
 
-## Task 1: 合并区域显示名词典
+## Task 1: 构建区域显示名词典（四源合并 + 逐词展开）
 
 新图谱 163 区中有 45 个在 `$PKG/data/region_names.equal_study.json`（174 条）里没有显示名。
-其中 27 个可从 `interactive_brain_atlas/data/regions.js`（106 条）补齐，
-余 18 个由转换器回退为 `"{region_id} · {gyral}"`（见 `build_equal_study_gene_chunks.py:220-223`）。
+通过四源合并 + 逐词展开可达 **154/163 已命名（94.5%）**，
+余 **9 个**由转换器回退为 `"{region_id} · {gyral}"`（见 `build_equal_study_gene_chunks.py:220-223`）。
 
-**不要为这 18 个区编造名称** —— 回退标签是诚实的，且符合项目既有的「不推测」原则。
+**不要为这 9 个区编造名称**：`A11m` `A9/46` `ASFV` `CA2 CA3 CA4`
+`FWM MWM wmtg HWM SWM` `MV` `PMC` `Pit` `SWM`。
+它们在所有可用来源中均查无实据。`PMC` 尤其危险 —— 它可以是 premotor cortex、
+posteromedial cortex 或 primary motor cortex，在科学工具里标错比标缩写更糟。
+
+### 命名来源分布（已实测）
+
+| 来源 | 数量 |
+| --- | --- |
+| `region_names.equal_study.json` 直接命中 | 118 |
+| `regions.js` 直接命中 | 27 |
+| 逐词展开新补齐 | 8 |
+| 词典直接命中 | 1 |
+| 回退为缩写 | 9 |
+
+### 逐词词典的四个来源（共 272 条）
+
+1. `region_names.equal_study.json` 的 **154 条真名**（必须排除 20 条占位符）
+2. `regions.js` 的原子条目（+8）
+3. **从 `regions.js` 复合条目反推**（+21）—— 关键手法：
+   `"CA1C CA2C CA3C" → "caudal CA1 + caudal CA2 + caudal CA3"`，
+   acronym 按空格拆 N 词、name 按 `' + '` 拆 N 段，长度相等时一一对应回填
+4. `allen_3d_geometry.js` 的 141 个 Allen 官方标签（+89）
+
+（`connectivity.js` 经测试无新增贡献，+0，可不纳入）
 
 ### 缺口的根因（已验证，勿凭直觉改动）
 
@@ -167,9 +191,12 @@ git commit -m "chore: add jsdom test dependency and package manifest"
 其 `expandRegionName()` 按空格拆词、逐词查真名再以 `+` 连接，因此给出的是真名：
 `"CA1C CA2C CA3C" → "caudal CA1 + caudal CA2 + caudal CA3"`。
 
-余下 18 个本可用同样的逐词展开补齐，但前提词典 `region_acronym2name.json`
-**已不在代码树中**（`hierarchical clustering/` 目录整体缺失，`regions.js` 是其历史产物）。
-因此 18 个缺名是诚实的上限，不是待修的缺陷。
+余下 9 个本可用同样的逐词展开补齐，但其缺失的词（`CA4`、`MWM`、`wmtg`、`SWM`）
+与 7 个原子区（`A11m` `A9/46` `ASFV` `MV` `PMC` `Pit` `SWM`）在四个来源中均无实据；
+原始逐词词典 `region_acronym2name.json` **已不在代码树中**
+（`hierarchical clustering/` 目录整体缺失，`regions.js` 是其历史产物）。
+因此 9 个缺名是当前证据下的诚实上限，不是待修的缺陷。
+若后续能拿到权威词典或用户确认的名称，直接补入词典即可，无需改代码。
 
 **Files:**
 - Create: `scripts/build_gene_atlas_region_names.mjs`
@@ -188,23 +215,49 @@ const path = require('node:path');
 
 const OUT = path.join(__dirname, 'data', 'region_names.external_three_sources.json');
 
-test('merged region names cover the equal_study base entries', () => {
+test('the dictionary keeps real equal_study names and drops its placeholders', () => {
   const merged = JSON.parse(fs.readFileSync(OUT, 'utf8'));
-  // 来自 equal_study 基线的条目必须原样保留
   assert.equal(merged['A10'], 'frontal polar cortex (area 10)');
   assert.equal(merged['10N'], 'dorsal motor nucleus of the vagus (vagal nucleus)');
+  // equal_study 里的 20 条占位符（值以键开头）不得被当真名写入
+  for (const [key, value] of Object.entries(merged)) {
+    assert.ok(
+      value !== key && !value.startsWith(`${key} ·`),
+      `${key} 的值是占位符，不应写入词典`,
+    );
+  }
 });
 
-test('merged region names fill composite hippocampal labels from regions.js', () => {
+test('the dictionary fills composite labels straight from regions.js', () => {
   const merged = JSON.parse(fs.readFileSync(OUT, 'utf8'));
   assert.equal(merged['CA1C CA2C CA3C'], 'caudal CA1 + caudal CA2 + caudal CA3');
   assert.equal(merged['CA1U'], 'uncal CA1');
 });
 
-test('merged region names never invent labels for unknown acronyms', () => {
+test('token-wise expansion resolves composites absent from every direct source', () => {
   const merged = JSON.parse(fs.readFileSync(OUT, 'utf8'));
-  // 这 18 个在两个来源里都没有，必须缺席，交给转换器回退
-  for (const missing of ['A11m', 'A9/46', 'ASFV', 'PMC', 'Pit', 'SWM', 'MV', 'DLG']) {
+  // 这些靠逐词展开得到，之前无解
+  assert.equal(merged['FCx TCx'], 'frontal neocortex + temporal neocortex');
+  assert.equal(
+    merged['TCx PCx Ocx'],
+    'temporal neocortex + parietal neocortex + occipital neocortex',
+  );
+});
+
+test('Allen official labels supply otherwise-missing atomic names', () => {
+  const merged = JSON.parse(fs.readFileSync(OUT, 'utf8'));
+  assert.equal(merged['DLG'], 'dorsal lateral geniculate nucleus');
+  assert.equal(merged['SpC'], 'spinal cord');
+});
+
+test('the dictionary never invents labels for the nine unresolved regions', () => {
+  const merged = JSON.parse(fs.readFileSync(OUT, 'utf8'));
+  // 四个来源均无实据，必须缺席，交给转换器回退
+  const unresolved = [
+    'A11m', 'A9/46', 'ASFV', 'CA2 CA3 CA4',
+    'FWM MWM wmtg HWM SWM', 'MV', 'PMC', 'Pit', 'SWM',
+  ];
+  for (const missing of unresolved) {
     assert.equal(Object.hasOwn(merged, missing), false, `${missing} 不应被编造`);
   }
 });
@@ -223,9 +276,12 @@ cd $WEB && node --test test_gene_atlas_region_names.js
 创建 `scripts/build_gene_atlas_region_names.mjs`：
 
 ```js
-// 合并两个既有名称来源，产出新图谱专用的区域显示名词典。
-// 来源优先级：region_names.equal_study.json > interactive_brain_atlas/data/regions.js
-// 两处都没有的缩写一律不写入，由转换器回退为 "{region_id} · {gyral}"。
+// 产出新图谱专用的区域显示名词典。
+//
+// 策略：先从四个来源汇总出「逐词」词典，再用它展开无直接命中的复合区。
+// 两个关键约束：
+//   1. region_names.equal_study.json 里有 20 条回退占位符（值以键开头），必须排除；
+//   2. 四个来源都查不到的缩写一律不写入，由转换器回退为 "{region_id} · {gyral}"。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -236,26 +292,82 @@ const pkgNames = path.join(
   'digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2',
   'digitalbrain_gene_atlas', 'data', 'region_names.equal_study.json',
 );
-const regionsJs = path.join(webDir, 'interactive_brain_atlas', 'data', 'regions.js');
+const atlasDir = path.join(webDir, 'interactive_brain_atlas', 'data');
 const outPath = path.join(webDir, 'data', 'region_names.external_three_sources.json');
 
+// `window.X = {...};` 形式：取第一个 { 到最后一个 } 解析。
+async function readWindowJson(filePath) {
+  const text = await fs.readFile(filePath, 'utf8');
+  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+}
+
+const isPlaceholder = (key, value) => value === key || value.startsWith(`${key} ·`);
+
+const tokens = new Map();          // 逐词 acronym -> name
+const direct = new Map();          // 完整 region_id -> name
+function addToken(key, value) {
+  const trimmed = String(key).trim();
+  if (trimmed && value && !tokens.has(trimmed)) tokens.set(trimmed, value);
+}
+
+// 源 1: equal_study 的真名（排除占位符）
 const base = JSON.parse(await fs.readFile(pkgNames, 'utf8'));
+for (const [key, value] of Object.entries(base)) {
+  if (isPlaceholder(key, value)) continue;
+  direct.set(key, value);
+  if (!key.includes('+') && !key.includes(' ')) addToken(key, value);
+}
 
-// regions.js 是 `window.X = {...};` 形式，取第一个 { 到最后一个 } 解析。
-const text = await fs.readFile(regionsJs, 'utf8');
-const regionData = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
-const fromAtlas = Object.fromEntries(
-  regionData.regions.map((region) => [region.acronym, region.name]),
-);
+// 源 2/3: regions.js 的原子条目，以及从复合条目反推逐词真名。
+// 反推依据：expandRegionName() 按空格拆词、逐词查名、再用 ' + ' 连接，
+// 所以 acronym 的 N 个词与 name 的 N 个片段是一一对应的。
+const regionData = await readWindowJson(path.join(atlasDir, 'regions.js'));
+for (const region of regionData.regions) {
+  if (!direct.has(region.acronym)) direct.set(region.acronym, region.name);
+  if (!region.acronym.includes(' ')) {
+    addToken(region.acronym, region.name);
+    continue;
+  }
+  const parts = region.acronym.split(/\s+/);
+  const names = region.name.split(' + ');
+  if (parts.length === names.length) {
+    parts.forEach((part, index) => addToken(part, names[index]));
+  }
+}
 
-const merged = { ...fromAtlas, ...base };  // base 优先
-const ordered = Object.fromEntries(
-  Object.keys(merged).sort().map((key) => [key, merged[key]]),
+// 源 4: Allen 官方 141 个标签
+const geometry = await readWindowJson(path.join(atlasDir, 'allen_3d_geometry.js'));
+for (const label of geometry.labels) addToken(label.acronym, label.name);
+
+// 逐词展开：仅当每一个词都有真名时才拼接，否则整个区不写入。
+const resolved = new Map(direct);
+for (const [acronym, name] of tokens) {
+  if (!resolved.has(acronym)) resolved.set(acronym, name);
+}
+const pending = new Set(
+  [...direct.keys(), ...tokens.keys()].filter((key) => key.includes(' ')),
 );
+for (const acronym of pending) {
+  if (resolved.has(acronym)) continue;
+  const parts = acronym.split(/\s+/);
+  if (parts.every((part) => tokens.has(part))) {
+    resolved.set(acronym, parts.map((part) => tokens.get(part)).join(' + '));
+  }
+}
+
+// 输出前再滤一道：任何占位符形式都不得泄露到词典里。
+const ordered = {};
+for (const key of [...resolved.keys()].sort()) {
+  const value = resolved.get(key);
+  if (!isPlaceholder(key, value)) ordered[key] = value;
+}
 
 await fs.mkdir(path.dirname(outPath), { recursive: true });
 await fs.writeFile(outPath, `${JSON.stringify(ordered, null, 2)}\n`);
-console.log(`Wrote ${Object.keys(ordered).length} region labels to ${outPath}`);
+console.log(
+  `Wrote ${Object.keys(ordered).length} region labels ` +
+  `(from ${tokens.size} tokens) to ${outPath}`,
+);
 ```
 
 **Step 4: 运行脚本**
@@ -264,8 +376,8 @@ console.log(`Wrote ${Object.keys(ordered).length} region labels to ${outPath}`);
 cd $WEB && node scripts/build_gene_atlas_region_names.mjs
 ```
 
-预期输出：`Wrote 201 region labels to .../data/region_names.external_three_sources.json`
-（174 base + 106 atlas 去重后约 201；数字以实际为准，不是断言目标）
+预期输出形如：`Wrote NNN region labels (from 272 tokens) to .../region_names.external_three_sources.json`
+（逐词词典应为 272 条；条目总数以实际为准，不是断言目标）
 
 **Step 5: 运行测试确认通过**
 
@@ -289,7 +401,8 @@ print('回退清单:', missing)
 EOF
 ```
 
-预期：`163 区中已命名 145，回退 18`，清单与设计文档一致。
+预期：`163 区中已命名 154，回退 9`，回退清单与本 Task 开头列出的 9 个一致。
+**若回退数大于 9，说明逐词展开或反推环节有遗漏，需定位后再继续。**
 
 **Step 7: 提交**
 

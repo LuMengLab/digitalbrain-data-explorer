@@ -4,6 +4,9 @@ __pycache__/
 
 # Stage A 的本地缓存（约 5.7 GB）：可由 scripts/run_gene_atlas_stage_a.py 重建，不入库。
 gene_atlas_cache/
+# Stage C 的 Web 产物（全编码区域级约 320 MB / 近 2 万文件）：由 scripts/export_gene_atlas_web.py
+# 重建、发布时拷入 github-pages/，不入库。
+gene_atlas_web/
 
 # 交付包内的大体积衍生数据：不使用（44M 版），原始 tarball 在 /data/DigitalBrain/ 可重解压
 digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2/digitalbrain_gene_atlas/public/data/

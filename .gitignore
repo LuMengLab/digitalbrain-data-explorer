@@ -7,6 +7,9 @@ gene_atlas_cache/
 # Stage C 的 Web 产物（全编码区域级约 320 MB / 近 2 万文件）：由 scripts/export_gene_atlas_web.py
 # 重建、发布时拷入 github-pages/，不入库。
 gene_atlas_web/
+# 发布包里的同一份数据。注意：github-pages/ 本身是入库的，所以除了基因数据外
+# 的发布产物依旧提交；基因数据需在部署环节单独提供。
+github-pages/gene-data/
 
 # 交付包内的大体积衍生数据：不使用（44M 版），原始 tarball 在 /data/DigitalBrain/ 可重解压
 digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2/digitalbrain_gene_atlas/public/data/

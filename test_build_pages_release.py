@@ -43,6 +43,8 @@ def test_build_release_dir_creates_expected_pages_bundle():
         write_file(source_dir / "digitalneuron_data.js", "window.currentData={}")
         write_file(source_dir / "digitalneuron_data-0.js", "legacy")
         write_file(source_dir / "test_smoke.js", "test")
+        write_file(source_dir / "gene-atlas-data.js", "console.log('gene data')")
+        write_file(source_dir / "gene-atlas-view.js", "console.log('gene view')")
 
         atlas_dir = source_dir / "interactive_brain_atlas"
         (atlas_dir / "data").mkdir(parents=True)
@@ -71,6 +73,99 @@ def test_build_release_dir_creates_expected_pages_bundle():
         assert (output_dir / "atlas" / "data" / "regions.js").exists()
         assert not (output_dir / "digitalneuron_data-0.js").exists()
         assert not (output_dir / "test_smoke.js").exists()
+        assert (output_dir / "gene-atlas-data.js").exists()
+        assert (output_dir / "gene-atlas-view.js").exists()
+
+
+def _minimal_source(source_dir: Path) -> None:
+    """只建 build_release_dir 必需的文件，供不关心 atlas 细节的用例复用。"""
+    source_dir.mkdir(parents=True, exist_ok=True)
+    write_file(
+        source_dir / "digitalneuron_main.html",
+        '<html><body data-gene-atlas-base="gene_atlas_web">'
+        '<script src="interactive_brain_atlas/app.js"></script></body></html>',
+    )
+    for name in (
+        "README.md",
+        "styles.css",
+        "app.js",
+        "ui.js",
+        "charts.js",
+        "data-model.js",
+        "atlas-bridge.js",
+        "digitalneuron_data.js",
+        "gene-atlas-data.js",
+        "gene-atlas-view.js",
+    ):
+        write_file(source_dir / name, "x")
+    atlas_dir = source_dir / "interactive_brain_atlas"
+    (atlas_dir / "data").mkdir(parents=True, exist_ok=True)
+    write_file(atlas_dir / "index.html", "<html>atlas</html>")
+    write_file(atlas_dir / "styles.css", "body{}")
+    write_file(atlas_dir / "app.js", "x")
+    for name in (
+        "regions.js",
+        "allen_3d_geometry.js",
+        "connectivity.js",
+        "atlas_knowledge.js",
+    ):
+        write_file(atlas_dir / "data" / name, "x")
+
+
+def test_gene_atlas_payload_tree_is_copied_wholesale():
+    """genes/ 下是不定个数的文件（全编码近 2 万），不能手写进白名单。"""
+    module = load_module()
+
+    with TemporaryDirectory() as tmp_dir:
+        source_dir = Path(tmp_dir) / "web"
+        output_dir = Path(tmp_dir) / "pages"
+        _minimal_source(source_dir)
+
+        payload = source_dir / "gene_atlas_web"
+        (payload / "genes").mkdir(parents=True)
+        write_file(payload / "index.json", '{"genes":{"GFAP":"genes/GFAP.json"}}')
+        write_file(payload / "genes" / "GFAP.json", '{"symbol":"GFAP"}')
+        write_file(payload / "genes" / "GFAP.detail.json", '{"symbol":"GFAP"}')
+        write_file(payload / "genes" / "SNAP25.json", '{"symbol":"SNAP25"}')
+
+        module.build_release_dir(source_dir, output_dir)
+
+        released = output_dir / module.RELEASE_GENE_DIR
+        assert (released / "index.json").exists()
+        assert (released / "genes" / "GFAP.json").exists()
+        assert (released / "genes" / "GFAP.detail.json").exists()
+        assert (released / "genes" / "SNAP25.json").exists()
+
+
+def test_index_html_points_at_the_released_gene_directory():
+    module = load_module()
+
+    with TemporaryDirectory() as tmp_dir:
+        source_dir = Path(tmp_dir) / "web"
+        output_dir = Path(tmp_dir) / "pages"
+        _minimal_source(source_dir)
+        module.build_release_dir(source_dir, output_dir)
+
+        index_html = (output_dir / "index.html").read_text(encoding="utf-8")
+        assert f'data-gene-atlas-base="{module.RELEASE_GENE_DIR}"' in index_html
+        # The dev-tree name must not survive, or the published page would request a
+        # directory that is not in the bundle.
+        assert 'data-gene-atlas-base="gene_atlas_web"' not in index_html
+
+
+def test_a_build_without_the_gene_export_still_succeeds():
+    """基因数据是可选的：未导出时发布仍须成功，前端自带降级提示。"""
+    module = load_module()
+
+    with TemporaryDirectory() as tmp_dir:
+        source_dir = Path(tmp_dir) / "web"
+        output_dir = Path(tmp_dir) / "pages"
+        _minimal_source(source_dir)
+
+        module.build_release_dir(source_dir, output_dir)
+
+        assert (output_dir / "index.html").exists()
+        assert not (output_dir / module.RELEASE_GENE_DIR).exists()
 
 
 def test_release_file_map_uses_index_html():
@@ -80,6 +175,8 @@ def test_release_file_map_uses_index_html():
     assert mapping["README.md"] == "README.md"
     assert "digitalneuron_data.js" in mapping
     assert mapping["atlas-bridge.js"] == "atlas-bridge.js"
+    assert mapping["gene-atlas-data.js"] == "gene-atlas-data.js"
+    assert mapping["gene-atlas-view.js"] == "gene-atlas-view.js"
     assert "atlas_celltype_map.js" not in mapping
     assert "test_smoke.js" not in mapping
     atlas_assets = module.atlas_asset_map()

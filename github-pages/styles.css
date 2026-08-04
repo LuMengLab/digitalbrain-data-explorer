@@ -415,6 +415,65 @@ body {
     background: var(--panel-strong);
     border-radius: 20px;
     border: 1px solid var(--line);
+    position: relative;
+}
+
+/* Gene layer scope lock. The three filters cannot narrow a cross-study merge, so
+   the gene layer disables them and explains why. The explanation is a hover
+   tooltip, never an inline paragraph: as a flex child it stole width and squeezed
+   the selects flat. A small badge on the row's edge makes the tooltip findable. */
+.controls.is-scope-locked::after {
+    content: "\24D8  Global scope";
+    position: absolute;
+    top: 0;
+    right: 20px;
+    transform: translateY(-50%);
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--accent-strong);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    cursor: help;
+    box-shadow: 0 6px 16px rgba(31, 59, 78, 0.18);
+}
+
+.scope-note {
+    /* Out of the flex flow so it never resizes the selects; revealed on hover. */
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 20px;
+    z-index: 30;
+    max-width: 360px;
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 14px 34px rgba(31, 59, 78, 0.16);
+    color: var(--muted);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    pointer-events: none;
+}
+
+.scope-note strong {
+    color: var(--text);
+}
+
+/* Show it while the cursor is over the locked filter row (or a select regains
+   focus). Gated on the armed note so it never appears in the cell layer. */
+.controls.is-scope-locked:hover .scope-note:not([hidden]),
+.controls.is-scope-locked:focus-within .scope-note:not([hidden]) {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
 }
 
 .scope-banner {

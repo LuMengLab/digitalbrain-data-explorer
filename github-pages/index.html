@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="atlas/styles.css">
 </head>
-<body>
+<body data-gene-atlas-base="gene-data">
     <div class="container">
         <div class="header">
             <span class="header-kicker">DigitalBrain Data Explorer</span>
@@ -37,6 +37,12 @@
                     <option value="">Select Donor</option>
                 </select>
             </div>
+
+            <p class="scope-note" id="geneScopeNote" hidden>
+                Gene expression is a cross-study merge with the dataset axis collapsed, so it is
+                always shown at <strong>global scope</strong>. Collection, dataset and donor filters
+                do not apply to this layer.
+            </p>
         </div>
 
         <div class="scope-banner">
@@ -249,6 +255,29 @@
                 </div>
             </div>
 
+            <!-- The only chrome the gene layer adds; every other control is a relabelled
+                 reuse of the drawer sections below. Hidden until that layer is active. -->
+            <div class="gene-search-row" id="geneSearchRow" hidden>
+                <div class="gene-search-field">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+                    <input id="geneSearchInput" type="search" placeholder="Search a gene, e.g. GFAP" autocomplete="off" aria-label="Search a gene" />
+                    <div class="gene-search-results" id="geneSearchResults" hidden role="listbox"></div>
+                </div>
+                <div class="gene-chips" id="geneChips" aria-label="Selected genes"></div>
+                <div class="gene-switches">
+                    <div class="layer-tabs gene-tabs" id="geneMetricTabs" role="group" aria-label="Gene metric">
+                        <button type="button" data-metric="mean" class="active">Mean expression</button>
+                        <button type="button" data-metric="detection">Detection rate</button>
+                    </div>
+                    <div class="layer-tabs gene-tabs" id="geneRuleTabs" role="group" aria-label="Aggregation rule">
+                        <button type="button" data-rule="cell_weighted" class="active">Cell-weighted</button>
+                        <button type="button" data-rule="donor_balanced">Donor-balanced</button>
+                    </div>
+                </div>
+                <p class="gene-rule-note" id="geneRuleNote" hidden></p>
+                <p class="gene-data-note" id="geneDataNote" hidden></p>
+            </div>
+
             <div class="atlas-embed-stage">
                 <aside class="control-panel" id="atlasControlPanel" aria-label="Visualization controls">
                     <button type="button" class="atlas-panel-close" id="atlasSettingsClose" aria-label="Close settings">×</button>
@@ -258,11 +287,18 @@
                             <button type="button" data-layer="cells" class="active">Cell profiles</button>
                             <button type="button" data-layer="functional">Functional</button>
                             <button type="button" data-layer="structural">Structural</button>
+                            <button type="button" data-layer="genes">Gene expression</button>
                         </div>
                     </section>
                     <section class="control-section" id="abundanceSection">
                         <div class="section-heading"><span>Cell class</span><button class="text-button" id="resetFilters" type="button">Reset</button></div>
                         <div class="cell-type-list" id="cellTypeList"></div>
+                    </section>
+                    <section class="control-section" id="geneCellTypeSection" hidden>
+                        <div class="section-heading"><span>Cell class</span><button class="text-button" id="geneCellTypeReset" type="button">Reset</button></div>
+                        <p class="control-footnote">Unticking a class recolours the atlas, not just the detail panel.</p>
+                        <p class="control-footnote gene-detail-note" id="geneDetailNote" hidden></p>
+                        <div class="cell-type-list gene-cell-type-list" id="geneCellTypeList"></div>
                     </section>
                     <section class="control-section" id="atlasSearchSection">
                         <label class="field-label" for="regionSearch">Search the atlas</label>
@@ -433,6 +469,8 @@
     <script src="atlas/data/connectivity.js"></script>
     <script src="atlas/data/atlas_knowledge.js"></script>
     <script src="atlas/app.js"></script>
+    <script src="gene-atlas-data.js"></script>
+    <script src="gene-atlas-view.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

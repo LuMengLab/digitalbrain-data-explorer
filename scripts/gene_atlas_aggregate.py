@@ -60,3 +60,41 @@ def aggregate_groups(
     return GroupAggregate(
         mean=mean, detection=detection, n_cells=n_cells.astype(np.int64)
     )
+
+
+def aggregate_groups_blocked(
+    counts: sp.csr_matrix,
+    group_index: np.ndarray,
+    n_groups: int,
+    block_size: int = 50_000,
+) -> GroupAggregate:
+    """按细胞行分块累加，供无法整载入内存的大文件使用。
+
+    归一化是按行独立的，检出与求和都是可加的，因此分块与整载严格等价。
+    """
+    n_cells_total, n_genes = counts.shape
+    mean_sum = np.zeros((n_groups, n_genes), dtype=np.float64)
+    detect_sum = np.zeros((n_groups, n_genes), dtype=np.float64)
+    n_cells = np.zeros(n_groups, dtype=np.int64)
+
+    for start in range(0, n_cells_total, block_size):
+        stop = min(start + block_size, n_cells_total)
+        block = counts[start:stop]
+        block_groups = group_index[start:stop]
+        indicator = _indicator(block_groups, n_groups)
+
+        normalised = normalise_cp10k_log1p(block)
+        mean_sum += np.asarray((indicator @ normalised).todense())
+
+        structure = block.tocsr(copy=True)
+        structure.data = np.ones_like(structure.data, dtype=np.float64)
+        detect_sum += np.asarray((indicator @ structure).todense())
+
+        n_cells += np.asarray(indicator.sum(axis=1)).ravel().astype(np.int64)
+
+    safe = np.where(n_cells == 0, 1, n_cells).astype(np.float64)
+    return GroupAggregate(
+        mean=mean_sum / safe[:, None],
+        detection=detect_sum / safe[:, None],
+        n_cells=n_cells,
+    )

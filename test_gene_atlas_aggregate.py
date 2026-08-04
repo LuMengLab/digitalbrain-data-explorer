@@ -69,3 +69,32 @@ def test_aggregate_detection_uses_raw_counts_not_normalised_values():
     counts = sp.csr_matrix(np.array([[1.0, 0.0], [0.0, 0.0]]))
     result = module.aggregate_groups(counts, np.array([0, 0]), n_groups=1)
     np.testing.assert_allclose(result.detection[0], [0.5, 0.0])
+
+
+def test_blocked_aggregation_equals_whole_matrix_aggregation():
+    module = load_module()
+    rng = np.random.default_rng(20260804)
+    dense = rng.poisson(0.4, size=(97, 23)).astype(np.float64)
+    counts = sp.csr_matrix(dense)
+    group_index = rng.integers(0, 5, size=97)
+
+    whole = module.aggregate_groups(counts, group_index, n_groups=5)
+    # 故意选不能整除 97 的块大小，暴露 indptr 边界错误。
+    blocked = module.aggregate_groups_blocked(
+        counts, group_index, n_groups=5, block_size=10
+    )
+
+    np.testing.assert_allclose(blocked.mean, whole.mean, rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(blocked.detection, whole.detection, rtol=1e-9, atol=1e-12)
+    assert blocked.n_cells.tolist() == whole.n_cells.tolist()
+
+
+def test_blocked_aggregation_handles_block_larger_than_matrix():
+    module = load_module()
+    counts = sp.csr_matrix(np.array([[1.0, 2.0], [0.0, 4.0]]))
+    group_index = np.array([0, 0])
+    whole = module.aggregate_groups(counts, group_index, n_groups=1)
+    blocked = module.aggregate_groups_blocked(
+        counts, group_index, n_groups=1, block_size=10_000
+    )
+    np.testing.assert_allclose(blocked.mean, whole.mean, rtol=1e-9)

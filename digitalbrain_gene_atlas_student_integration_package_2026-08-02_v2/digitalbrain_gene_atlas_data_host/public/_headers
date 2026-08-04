@@ -1,6 +1,0 @@
-/data/*
-  Access-Control-Allow-Origin: *
-  Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-  Access-Control-Allow-Headers: Content-Type
-  Cross-Origin-Resource-Policy: cross-origin
-  Cache-Control: public, max-age=31536000, immutable

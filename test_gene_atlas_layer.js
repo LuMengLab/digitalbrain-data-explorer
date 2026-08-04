@@ -235,7 +235,38 @@ function testScopeFiltersAreDisabledInGeneLayer() {
   });
   const note = window.document.getElementById('geneScopeNote');
   assert.ok(note, 'a scope note element should exist');
-  assert.equal(note.hidden, false, 'the global-scope note must be visible');
+  // Armed, not inline: hidden=false means the tooltip is available on hover. It is
+  // absolutely positioned by CSS so it no longer squeezes the filter row.
+  assert.equal(note.hidden, false, 'the global-scope note must be armed');
+}
+
+function testScopeLockMarksTheFilterRowAsATooltipHost() {
+  const { window, drawOneFrame } = bootAtlas();
+  const controls = window.document.querySelector('.controls');
+  assert.ok(controls, 'the filter row should exist');
+  assert.equal(
+    controls.classList.contains('is-scope-locked'),
+    false,
+    'the filter row is not locked outside the gene layer',
+  );
+
+  window.DigitalBrainAtlas.applyGeneValues({ values: {}, metric: 'mean' });
+  drawOneFrame();
+  // The class is the hook CSS uses to show the lock badge and turn the note into a
+  // hover tooltip instead of an inline paragraph that squeezes the selects.
+  assert.equal(
+    controls.classList.contains('is-scope-locked'),
+    true,
+    'entering the gene layer marks the filter row as locked',
+  );
+
+  window.DigitalBrainAtlas.clearGeneValues();
+  drawOneFrame();
+  assert.equal(
+    controls.classList.contains('is-scope-locked'),
+    false,
+    'leaving the gene layer clears the lock marker',
+  );
 }
 
 function testLeavingGeneLayerRestoresTheScopeFilters() {
@@ -310,6 +341,7 @@ function main() {
     ['testLeavingTheGeneLayerRestoresTheCellsLayer', testLeavingTheGeneLayerRestoresTheCellsLayer],
     ['testGeneLayerBypassesTheExplorerScopeFilter', testGeneLayerBypassesTheExplorerScopeFilter],
     ['testScopeFiltersAreDisabledInGeneLayer', testScopeFiltersAreDisabledInGeneLayer],
+    ['testScopeLockMarksTheFilterRowAsATooltipHost', testScopeLockMarksTheFilterRowAsATooltipHost],
     ['testLeavingGeneLayerRestoresTheScopeFilters', testLeavingGeneLayerRestoresTheScopeFilters],
     ['testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked', testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked],
     ['testGeneLayerRestoresFiltersUnlockedByTheHost', testGeneLayerRestoresFiltersUnlockedByTheHost],

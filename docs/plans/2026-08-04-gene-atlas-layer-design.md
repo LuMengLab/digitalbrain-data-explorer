@@ -306,6 +306,36 @@ gene_atlas_web/
 基因数据是跨研究合并结果，数据集轴已在聚合中压掉，**无法按 Collection/Dataset/Donor 过滤**。
 切到 genes 图层时须禁用筛选器并显式标注「全局范围」。
 
+> **UI 落实（2026-08-04 修订）**：说明文字**不内联**在筛选器行内——作为 flex 子项它会
+> 抢占宽度、把三个 select 压扁。改为：锁定时给 `.controls` 加 `is-scope-locked` 类，
+> CSS 在行右上角渲染一个常驻小徽章「ⓘ Global scope」，说明文字改为**绝对定位的悬浮
+> tooltip**（`opacity/visibility` 过渡，`pointer-events:none`，不占布局），鼠标悬停筛选器行
+> 时浮现于行下方。守卫仍切换 `#geneScopeNote` 的 `hidden`（armed 语义），可见性交给 CSS。
+
+> **数据集选择的调研结论与本版决策（2026-08-04）**：曾评估「All / 选具体数据集 / 选
+> 具体 donor」的级联选择。结论如下：
+>
+> - **底层可行、无需重跑扫描**：Stage A 缓存本就按源文件分存，每个都带 `dataset_id`
+>   与完整 donor×region×cell_type 分组；`basename(source_path)` + collection 目录名
+>   slug 化后与 Explorer 的 (collection, dataset) 二元组 **109/109 确定性映射、0 歧义**，
+>   donor 标识 **99.8%** 命中。All / collection / dataset / donor 四级都是同一份缓存的
+>   不同聚合，那 53 分钟全量扫描**不必重跑**。
+> - **代价在 Stage C 前端产物**：聚合有损，从 All 级 805 组无法还原 dataset 级 1,864 组
+>   或 donor 级 14,714 组。单基因体积实测：All ≈ 31 KB、dataset 级 ≈ 51 KB、
+>   donor 级 ≈ 257 KB。按基因清单线性放大：1,000 基因 dataset 级约 52 MB、donor 级
+>   约 263 MB；5,000 基因带 donor 级达 1.3 GB，逼近 GitHub Pages 单仓库软上限。
+> - **视图价值低**：每数据集覆盖脑区数中位数为 **1**（多数研究只测一个区），选中具体
+>   数据集后 3D 图大概率只有 1 个区着色，donor 级更稀疏、噪声大。
+>
+> **本版决策：仅做 All（全局跨研究合并），不引入 Collection/Dataset/Donor 选择。**
+> 筛选器在 genes 图层保持锁定。数据集级选择留作后续迭代——若启用，简易方案见下。
+>
+> **后续若要做的简易方案（不重跑扫描）**：Stage B/C 保留 dataset 轴，按基因导出
+> `genes/<SYMBOL>.json` 内联 All＋dataset 级明细（≈51 KB，覆盖 All/collection/dataset
+> 三级由前端聚合）；donor 级另拆 `genes/<SYMBOL>.donors.json` **按需 fetch**、不进首屏、
+> 可选不纳入发布产物。前端 `gene-atlas-data.js` 的 `recomputeRegion()` 已具备按子集
+> 同规则重算能力，加 dataset/donor 维度是同构扩展。届时需撤销筛选器锁定并同步修订本节。
+
 陷阱：`getVisibleRegions()`（`app.js:648-652`）会用 `state.linkedActiveRegions` 裁剪可见区域。
 若不旁路，Explorer 当前选中范围会**静默裁掉**基因图层本该显示的区域，
 表现为「基因在这些区不表达」，实为被范围过滤器吃掉。**进入 genes 图层必须旁路该过滤。**
@@ -345,6 +375,8 @@ gene_atlas_web/
 ## 十、明确不在本次范围内
 
 - 按 Collection/Dataset/Donor 过滤基因数据（数据集轴已压掉，需为每数据集单独建包）
+  ——**已调研，确认可行且无需重跑扫描；因产物体积与视图价值权衡，本版仅做 All，
+  见第八节的决策记录**
 - 用真实 region × celltype 联合矩阵替换 `interactive_brain_atlas/data/regions.js`
   中哈希扰动生成的示意组成（技术上可行，留作后续迭代）
 - 全量 14 万基因的前端数据包（先做子集验证，规模化留作第二阶段）

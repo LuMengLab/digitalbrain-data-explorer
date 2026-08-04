@@ -72,8 +72,16 @@
                 });
                 if (!locked) restore = null;
             }
+            // The note is armed (not [hidden]) while locked, but CSS renders it as a
+            // hover tooltip rather than an inline paragraph, so it no longer squeezes
+            // the filter row. The class on the container is the hook for that styling
+            // and for the always-visible lock badge that makes the tooltip findable.
             const note = doc.getElementById("geneScopeNote");
             if (note) note.hidden = !locked;
+            const controls =
+                (note && note.closest && note.closest(".controls")) ||
+                doc.querySelector(".controls");
+            if (controls) controls.classList.toggle("is-scope-locked", locked);
         }
 
         target.addEventListener("digitalbrain-atlas-layer", (event) => {

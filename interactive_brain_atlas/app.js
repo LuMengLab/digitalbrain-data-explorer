@@ -95,6 +95,10 @@
     cellTypes: [...source.cellTypes],
     selectedCellType: ALL_CELL_TYPES,
     dataLayer: "cells",
+    // Gene expression layer: { acronym: value } for the active gene. A region that
+    // is absent from this table has no data and must never be drawn as a zero.
+    geneValues: null,
+    geneMetric: "mean",
     anatomyStyle: "boundaries",
     connectivityPercentile: 96,
     selectedRegion: null,
@@ -650,13 +654,42 @@
         state.linkedActiveRegions.has(region.acronym),
       );
     }
+    if (state.dataLayer === "genes") {
+      // Only regions carrying a value for the active gene are shown; the cell-class
+      // threshold belongs to the composition layer and does not apply here.
+      return anatomicallyMapped.filter((region) => geneValueFor(region) !== null);
+    }
     if (isAllCellTypes()) return anatomicallyMapped;
     return anatomicallyMapped.filter(
       (region) => (region.composition[state.selectedCellType] || 0) >= state.minimum,
     );
   }
 
+  // Value provider for the marker colour/radius channel. Returns null for "no data"
+  // so callers can paint neutral grey and keep the region out of the colour range.
+  function geneValueFor(region) {
+    if (!state.geneValues) return null;
+    const value = state.geneValues[region.acronym];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+
+  function getGeneRange() {
+    const values = state.regions
+      .filter((region) => region.hasAnatomy)
+      .map((region) => geneValueFor(region))
+      .filter((value) => value !== null);
+    if (!values.length) return { min: null, max: null };
+    return { min: Math.min(...values), max: Math.max(...values) };
+  }
+
   function getRange() {
+    if (state.dataLayer === "genes") {
+      const range = getGeneRange();
+      // Detection rate has a natural ceiling, so it keeps a fixed 0-100% scale to
+      // stay comparable across genes; mean expression is unbounded and stretches.
+      if (state.geneMetric === "detection") return { min: 0, max: 1 };
+      return { min: range.min ?? 0, max: range.max ?? 0 };
+    }
     const values = state.regions.filter((region) => region.hasAnatomy).map(
       (region) => region.composition[state.selectedCellType] || 0,
     );
@@ -1260,8 +1293,14 @@
     dom.secondaryCountLabel.textContent = "cell classes";
 
     const allMode = isAllCellTypes();
-    const { min, max } = allMode ? { min: 0, max: 1 } : getRange();
-    if (!allMode) {
+    const geneMode = state.dataLayer === "genes";
+    const { min, max } = allMode && !geneMode ? { min: 0, max: 1 } : getRange();
+    if (geneMode) {
+      dom.legendRange.textContent =
+        state.geneMetric === "detection"
+          ? "0–100%"
+          : `${min.toFixed(2)}–${max.toFixed(2)}`;
+    } else if (!allMode) {
       dom.legendRange.textContent = `${Math.round(min * 100)}–${Math.round(max * 100)}%`;
     }
     const projected = visibleRegions
@@ -1284,20 +1323,35 @@
     for (const item of projected) {
       const { region, projected: point } = item;
       const dominant = dominantCellType(region);
-      const value = allMode ? dominant.value : region.composition[state.selectedCellType] || 0;
-      let normalized = allMode ? 0.62 : max === min ? 0.5 : (value - min) / (max - min);
-      if (linkedCells) {
+      const geneValue = geneMode ? geneValueFor(region) : null;
+      const value = geneMode
+        ? geneValue
+        : allMode
+          ? dominant.value
+          : region.composition[state.selectedCellType] || 0;
+      let normalized = geneMode
+        ? max === min
+          ? 0.5
+          : (value - min) / (max - min)
+        : allMode
+          ? 0.62
+          : max === min
+            ? 0.5
+            : (value - min) / (max - min);
+      if (linkedCells && !geneMode) {
         const count = linkedCells[region.acronym] || 0;
         normalized = maxLinkedCount > 0 ? Math.sqrt(count) / Math.sqrt(maxLinkedCount) : 0.5;
       }
       const selected = state.selectedRegion?.id === region.id;
       const hovered = state.hoveredRegion?.id === region.id;
       const radius =
-        (allMode
-          ? linkedCells
-            ? 3.2 + normalized * 5
-            : 5.4
-          : 2.8 + normalized * 4.2) * Math.max(0.72, point.perspective);
+        (geneMode
+          ? 3.2 + normalized * 5
+          : allMode
+            ? linkedCells
+              ? 3.2 + normalized * 5
+              : 5.4
+            : 2.8 + normalized * 4.2) * Math.max(0.72, point.perspective);
       const accent = colors[allMode ? dominant.cellType : state.selectedCellType] || "#61ddb2";
       const alpha = allMode ? 0.82 : 0.42 + normalized * 0.55;
 
@@ -1587,7 +1641,7 @@
 
     ctx.clearRect(0, 0, width, height);
     if (state.showShell) drawAtlasAnatomy();
-    if (state.dataLayer === "cells") drawRegions();
+    if (state.dataLayer === "cells" || state.dataLayer === "genes") drawRegions();
     else drawConnectivity();
     requestAnimationFrame(render);
   }
@@ -1742,7 +1796,7 @@
   }
 
   function selectDataLayer(layer) {
-    if (!["cells", "functional", "structural"].includes(layer)) return;
+    if (!["cells", "functional", "structural", "genes"].includes(layer)) return;
     const preserveConnection = state.selectedConnection?.layer === layer;
     state.dataLayer = layer;
     state.hoveredRegion = null;
@@ -2761,6 +2815,47 @@
     },
     clear() {
       clearLinkedScope();
+    },
+
+    // Gene expression layer. `values` is { acronym: number }; an absent acronym
+    // means "no data" and stays out of both the colour range and the canvas.
+    applyGeneValues(payload) {
+      const values = (payload && payload.values) || {};
+      state.geneValues = values;
+      if (payload && payload.metric) {
+        state.geneMetric = payload.metric === "detection" ? "detection" : "mean";
+      }
+      selectDataLayer("genes");
+      return this.geneSummary();
+    },
+
+    clearGeneValues() {
+      state.geneValues = null;
+      selectDataLayer("cells");
+      return this.geneSummary();
+    },
+
+    // Read-only view used by the gene search row for its legend and "n regions
+    // with data" counter, and by the tests.
+    geneSummary() {
+      const range = getGeneRange();
+      return {
+        layer: state.dataLayer,
+        metric: state.geneMetric,
+        regions:
+          state.dataLayer === "genes"
+            ? getVisibleRegions().map((region) => region.acronym)
+            : [],
+        min: range.min,
+        max: range.max,
+      };
+    },
+
+    // Whether an acronym exists in the catalogue and can be placed in 3D.
+    knowsRegion(acronym) {
+      return state.regions.some(
+        (region) => region.acronym === acronym && region.hasAnatomy,
+      );
     },
   };
 

@@ -187,6 +187,14 @@ def test_read_symbol_list_skips_comments_and_blanks(tmp_path):
     assert module.read_symbol_list(listing) == ["GFAP", "SNAP25"]
 
 
+def test_read_symbol_list_strips_trailing_comments(tmp_path):
+    """生成的清单会在符号后面注特异性得分，不剥掉就会得到垃圾符号。"""
+    module = load_module()
+    listing = tmp_path / "genes.txt"
+    listing.write_text("GFAP        #    123.4x\nSNAP25 # 2.1x (prior)\n", encoding="utf-8")
+    assert module.read_symbol_list(listing) == ["GFAP", "SNAP25"]
+
+
 def test_shipped_detail_gene_list_is_a_usable_subset():
     module = load_module()
     detail = module.read_symbol_list(module.DEFAULT_DETAIL_LIST)

@@ -55,12 +55,15 @@ def _round(value):
 
 
 def read_symbol_list(path) -> list[str]:
-    """读一行一个的符号清单：跳注释/空行，保留首现顺序并去重。"""
+    """读一行一个的符号清单：跳注释/空行，保留首现顺序并去重。
+
+    行尾注释也要剥——生成的清单会在符号后面注特异性得分。
+    """
     symbols: list[str] = []
     seen: set[str] = set()
     for line in Path(path).read_text(encoding="utf-8").splitlines():
-        symbol = line.strip()
-        if not symbol or symbol.startswith("#"):
+        symbol = line.split("#", 1)[0].strip()
+        if not symbol:
             continue
         if symbol not in seen:
             seen.add(symbol)

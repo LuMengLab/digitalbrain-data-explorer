@@ -66,3 +66,48 @@ def test_every_usable_source_file_exists():
     inv = module.load_inventory()
     missing = [e.source_path for e in inv.usable if not Path(e.source_path).exists()]
     assert missing == []
+
+
+def test_region_vocabulary_is_exactly_163_and_matches_atlas_axis():
+    module = load_module()
+    inv = module.load_inventory()
+    vocab = module.collect_vocabularies(inv)
+
+    # obs/atlas_ontology_term_Mod-Brodmann 在 99/99 文件中存在，
+    # 全局取值恰为 163 区——脑区协调已在源文件内完成，无需自建映射。
+    assert len(vocab.regions) == 163
+
+
+def test_cell_type_vocabulary_matches_the_explorer_taxonomy():
+    module = load_module()
+    inv = module.load_inventory()
+    vocab = module.collect_vocabularies(inv)
+
+    # 源 obs 的细胞类型与 digitalneuron_data.js 的 31 类逐字相同，
+    # 因此基因图层不需要任何归并映射。
+    assert len(vocab.cell_types) == 31
+    assert "Amygdala excitatory" in vocab.cell_types
+    assert "Oligodendrocyte precursor" in vocab.cell_types
+    # 上游二阶段 summary 的 11 类广义标签不属于本站口径，不应出现。
+    assert "Glia, other" not in vocab.cell_types
+    assert "Microglia/macrophage" not in vocab.cell_types
+
+
+def test_cell_type_vocabulary_is_identical_to_digitalneuron_data_js():
+    """「零映射」前提的直接守卫：源 obs 词表与 Overview 页面词表必须逐字相同。
+
+    只断言个数与抽查两项不足以发现改名——一旦两侧出现任何差异，
+    基因图层与 Overview 的口径就分裂了，必须在此炸掉。
+    """
+    import re
+
+    module = load_module()
+    vocab = module.collect_vocabularies(module.load_inventory())
+
+    text = Path(__file__).with_name("digitalneuron_data.js").read_text(encoding="utf-8")
+    explorer: set[str] = set()
+    for block in re.findall(r'"cell_types":\s*\[(.*?)\]', text, re.S):
+        explorer |= set(re.findall(r'"([^"]+)"', block))
+
+    assert len(explorer) == 31
+    assert explorer == set(vocab.cell_types)

@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 
+import h5py
+import numpy as np
+
 AUDIT_MANIFEST = Path(
     "/data/DigitalBrain/data/scBrainCellAtlas/outputs"
     "/external_three_sources_audit_2026-08-02/audit_manifest.json"
@@ -82,3 +85,28 @@ def load_inventory(manifest_path: Path = AUDIT_MANIFEST) -> Inventory:
         explorer_cells=EXPLORER_CELLS,
         usable_cells=usable_cells,
     )
+
+
+@dataclass(frozen=True)
+class Vocabularies:
+    regions: frozenset[str]
+    cell_types: frozenset[str]
+
+
+def read_obs_categories(obs_group: h5py.Group, field: str) -> set[str]:
+    """读一个 obs 分类字段的全部取值，兼容 categorical 与纯数组两种编码。"""
+    node = obs_group[field]
+    if isinstance(node, h5py.Group):
+        return set(np.asarray(node["categories"]).astype(str).tolist())
+    return set(np.asarray(node).astype(str).tolist())
+
+
+def collect_vocabularies(inventory: Inventory) -> Vocabularies:
+    regions: set[str] = set()
+    cell_types: set[str] = set()
+    for entry in inventory.usable:
+        with h5py.File(entry.source_path, "r") as handle:
+            obs = handle["obs"]
+            regions |= read_obs_categories(obs, entry.region_field)
+            cell_types |= read_obs_categories(obs, entry.cell_type_field)
+    return Vocabularies(regions=frozenset(regions), cell_types=frozenset(cell_types))

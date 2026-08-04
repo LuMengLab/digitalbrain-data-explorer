@@ -23,16 +23,19 @@ $PY -m pytest <file>::<test> -v
 
 **JS 测试约定**：模仿 `test_atlas_bridge.js`——`node:assert/strict`、用 `vm.runInNewContext` 把被测模块载入沙箱、文件末尾 `main()` 依次调用各测试并 `console.log('PASS <name>')`。运行：`node test_x.js`，期望输出以 `PASS` 结尾且退出码 0。
 
-**新增前端模块必须是 ES5 IIFE**（与 `data-model.js` / `atlas-bridge.js` 一致）：
+**新增前端模块采用 IIFE 包裹 + 双导出**（与 `data-model.js` / `atlas-bridge.js` 一致）：
 
 ```js
 (function (global) {
-    'use strict';
-    // 只用 var / function，禁用 const/let/箭头函数/class
+    // 语法与仓库一致：现代 ES2018+（const/let、箭头函数、展开运算符）
     global.XXX = api;
-    if (typeof module !== 'undefined' && module.exports) { module.exports = api; }
-})(typeof window !== 'undefined' ? window : globalThis);
+    if (typeof module !== "undefined" && module.exports) { module.exports = api; }
+})(typeof window !== "undefined" ? window : globalThis);
 ```
+
+> 实测修正：本仓库 `var` 出现 **0 次**（data-model.js / atlas-bridge.js / charts.js / ui.js /
+> app.js / interactive_brain_atlas/app.js 合计 const 600+ 次）。早前版本本段写的
+> 「只用 var / 禁用 const」与代码事实不符，若照其执行会产出全仓库唯一一个 ES5 文件。
 
 **权威元数据**：源文件清单、`matrix_source`、`resolved_fields` 全部来自
 `/data/DigitalBrain/data/scBrainCellAtlas/outputs/external_three_sources_audit_2026-08-02/audit_manifest.json`。

@@ -331,6 +331,224 @@ function testGeneLayerRestoresFiltersUnlockedByTheHost() {
   assert.equal(dataset.disabled, false, 'leaving restores the state the host had set');
 }
 
+// --- region detail panel in the genes layer ---
+
+// Selects a region through the host API, so the assertions cover the same panel a
+// canvas click fills in.
+function selectRegion(window, acronym) {
+  const region = window.DIGITALBRAIN_REGION_DATA.regions.find(
+    (candidate) => candidate.acronym === acronym,
+  );
+  assert.ok(region, `${acronym} should be in the catalogue`);
+  window.DigitalBrainAtlas.selectRegion(acronym);
+  return region;
+}
+
+function detailRows(window) {
+  return [...window.document.querySelectorAll('#compositionBars .composition-row')].map(
+    (row) => ({
+      label: row.querySelector('span').textContent,
+      value: row.querySelector('strong') ? row.querySelector('strong').textContent : '',
+    }),
+  );
+}
+
+function geneDetailFixture() {
+  return {
+    symbol: 'GFAP',
+    metric: 'mean',
+    value: 2.68,
+    support: { datasets: 13, donors: 246, cells: 1204913 },
+    detailAvailable: true,
+    rows: [
+      { cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 },
+      { cellType: 'Microglia', mean: 0.4, detection: 0.1, cells: 10 },
+    ],
+  };
+}
+
+function testGeneLayerDetailShowsTheGeneNotConnectivity() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => geneDetailFixture());
+  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const label = window.document.getElementById('focusLabel').textContent;
+  const value = window.document.getElementById('focusValue').textContent;
+  // Without a genes branch this falls through to the connectivity wording, which
+  // would label a gene expression value as a projection weight.
+  assert.match(label, /GFAP/, `the focus should name the gene, got "${label}"`);
+  assert.doesNotMatch(label, /weight|projection/i, 'connectivity wording must not leak in');
+  assert.match(value, /2\.68/);
+}
+
+function testGeneLayerDetailListsCellClassValues() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => geneDetailFixture());
+  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const rows = detailRows(window);
+  const astro = rows.find((row) => row.label === 'Astrocyte');
+  assert.ok(astro, `Astrocyte should be listed, got ${JSON.stringify(rows.slice(0, 4))}`);
+  assert.match(astro.value, /3\.25/, 'the gene value, not a composition percentage');
+}
+
+// 31% of (region, cellType) combinations have no cells at all. Rendering those as
+// 0 would claim the gene was measured there and found silent.
+function testCellClassesWithoutDataSaySoInsteadOfZero() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => ({
+    symbol: 'GFAP',
+    metric: 'mean',
+    value: 3.25,
+    support: { datasets: 1, donors: 1, cells: 40 },
+    detailAvailable: true,
+    // Only one class carries data; every other class in the vocabulary is absent.
+    rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
+  }));
+  atlas.applyGeneValues({ values: { [acronym]: 3.25 }, metric: 'mean' });
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const rows = detailRows(window);
+  assert.ok(rows.length > 1, 'the whole class vocabulary is listed, not just the hits');
+  const missing = rows.filter((row) => row.label !== 'Astrocyte');
+  assert.ok(
+    missing.every((row) => /no data/i.test(row.value)),
+    `absent classes must read as no data, got ${JSON.stringify(missing.slice(0, 3))}`,
+  );
+  assert.ok(
+    missing.every((row) => !/^0(\.0+)?%?$/.test(row.value.trim())),
+    'absent classes must not render as 0',
+  );
+}
+
+// support is the evidence behind the number: one donor and 963 cells does not
+// deserve the same confidence as 246 donors and 1.2M cells.
+function testDetailReportsTheSupportBehindTheValue() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => geneDetailFixture());
+  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const status = window.document.getElementById('detailDataStatus').textContent;
+  assert.match(status, /13/, 'datasets');
+  assert.match(status, /246/, 'donors');
+  assert.match(status, /1,204,913|1204913/, 'cells');
+}
+
+function testARegionWithoutGeneDataSaysSo() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 2);
+
+  atlas.setGeneDetailProvider((acronym) =>
+    acronym === picked[0]
+      ? geneDetailFixture()
+      : {
+          symbol: 'GFAP',
+          metric: 'mean',
+          value: null,
+          support: null,
+          detailAvailable: true,
+          rows: [],
+        },
+  );
+  atlas.applyGeneValues({ values: { [picked[0]]: 2.68 }, metric: 'mean' });
+  drawOneFrame();
+  selectRegion(window, picked[1]);
+
+  const value = window.document.getElementById('focusValue').textContent;
+  assert.match(value, /—|no data/i, `a region with no data must say so, got "${value}"`);
+}
+
+// The ~19.2k region-only genes have no cellType tier; the panel must state that
+// rather than showing an empty class list.
+function testDetailStatesWhenTheCellClassTierIsUnavailable() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => ({
+    symbol: 'SNAP25',
+    metric: 'mean',
+    value: 3.1,
+    support: { datasets: 5, donors: 9, cells: 10 },
+    detailAvailable: false,
+    rows: [],
+  }));
+  atlas.applyGeneValues({ values: { [acronym]: 3.1 }, metric: 'mean' });
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const panel = window.document.getElementById('compositionBars').textContent;
+  assert.match(
+    panel,
+    /region-level|not available|unavailable/i,
+    `the missing tier must be explained, got "${panel.slice(0, 120)}"`,
+  );
+}
+
+// Falling back to the cells-layer composition here would silently show cell
+// percentages under a gene heading.
+function testDetailWithoutAProviderDoesNotThrow() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.applyGeneValues({ values: { [acronym]: 1.5 }, metric: 'mean' });
+  drawOneFrame();
+  assert.doesNotThrow(() => selectRegion(window, acronym));
+}
+
+// Regression guard, not new behaviour: applyGeneValues routes through
+// selectDataLayer, which already refreshes an open panel. Short-circuiting that
+// call when the layer has not changed would look like a harmless optimisation and
+// would silently leave the panel showing the previous metric.
+function testRepaintingRefreshesTheOpenDetailPanel() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  let metric = 'mean';
+  atlas.setGeneDetailProvider(() => ({
+    symbol: 'GFAP',
+    metric,
+    value: metric === 'mean' ? 2.68 : 0.42,
+    support: { datasets: 13, donors: 246, cells: 1204913 },
+    detailAvailable: true,
+    rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
+  }));
+  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  drawOneFrame();
+  selectRegion(window, acronym);
+  assert.match(window.document.getElementById('focusValue').textContent, /2\.68/);
+
+  metric = 'detection';
+  atlas.applyGeneValues({ values: { [acronym]: 0.42 }, metric: 'detection' });
+  drawOneFrame();
+
+  const value = window.document.getElementById('focusValue').textContent;
+  assert.match(value, /42/, `the panel must follow the metric switch, got "${value}"`);
+  assert.match(window.document.getElementById('focusLabel').textContent, /detection/i);
+}
+
 function main() {
   const cases = [
     ['testGeneLayerIsAcceptedByTheLayerWhitelist', testGeneLayerIsAcceptedByTheLayerWhitelist],
@@ -346,6 +564,14 @@ function main() {
     ['testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked', testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked],
     ['testGeneLayerRestoresFiltersUnlockedByTheHost', testGeneLayerRestoresFiltersUnlockedByTheHost],
     ['testConnectivityChromeStaysHiddenInGeneLayer', testConnectivityChromeStaysHiddenInGeneLayer],
+    ['testGeneLayerDetailShowsTheGeneNotConnectivity', testGeneLayerDetailShowsTheGeneNotConnectivity],
+    ['testGeneLayerDetailListsCellClassValues', testGeneLayerDetailListsCellClassValues],
+    ['testCellClassesWithoutDataSaySoInsteadOfZero', testCellClassesWithoutDataSaySoInsteadOfZero],
+    ['testDetailReportsTheSupportBehindTheValue', testDetailReportsTheSupportBehindTheValue],
+    ['testARegionWithoutGeneDataSaysSo', testARegionWithoutGeneDataSaysSo],
+    ['testDetailStatesWhenTheCellClassTierIsUnavailable', testDetailStatesWhenTheCellClassTierIsUnavailable],
+    ['testDetailWithoutAProviderDoesNotThrow', testDetailWithoutAProviderDoesNotThrow],
+    ['testRepaintingRefreshesTheOpenDetailPanel', testRepaintingRefreshesTheOpenDetailPanel],
   ];
   cases.forEach(([name, fn]) => {
     fn();

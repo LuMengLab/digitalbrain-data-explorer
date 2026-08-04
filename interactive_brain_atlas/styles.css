@@ -1941,6 +1941,29 @@
   color: #d8e7e5;
 }
 
+/* Gene layer: a class with no cells in this region. Dimmed and without a bar, so
+   it cannot be mistaken for a measured value of zero. */
+.composition-row.composition-missing {
+  color: #5c6874;
+}
+
+.composition-row.composition-missing strong {
+  font-style: italic;
+  font-weight: 400;
+}
+
+.composition-row.composition-missing .bar-track {
+  background: #16212a;
+}
+
+/* Gene layer: a full-width sentence instead of a value row, used when there is no
+   per-class tier to show at all. */
+.composition-row.composition-notice {
+  grid-template-columns: minmax(0, 1fr);
+  color: #8aa0ad;
+  line-height: 1.5;
+}
+
 .bar-track {
   grid-column: 1 / -1;
   height: 4px;

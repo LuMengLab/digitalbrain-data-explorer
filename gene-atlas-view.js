@@ -28,7 +28,9 @@
         const doc = settings.document || global.document;
         const host = settings.window || global;
         const data = settings.data || global.GeneAtlasData;
-        const atlas = settings.atlas || global.DigitalBrainAtlas;
+        // Not const: the atlas IIFE may still be booting when the row is wired, so
+        // the host can hand it over later through attachAtlas().
+        let atlas = settings.atlas || global.DigitalBrainAtlas;
         if (!doc || !data) return null;
 
         const dom = {
@@ -86,6 +88,37 @@
                     symbol: state.active,
                 });
             }
+        }
+
+        // What the atlas needs to fill its region detail panel for the active gene.
+        // Reads live state, so installing it once is enough: later metric, rule and
+        // gene switches are picked up on the next call.
+        function geneDetailSnapshot(acronym) {
+            const symbol = state.active;
+            if (!symbol) return null;
+            const raw = currentValues()[acronym];
+            const detailAvailable = canFilter(symbol);
+            return {
+                symbol,
+                metric: data.metric(),
+                value: typeof raw === "number" && Number.isFinite(raw) ? raw : null,
+                support: data.regionSupport(symbol, acronym) || null,
+                detailAvailable,
+                rows: detailAvailable ? data.cellTypeDetail(symbol, acronym) : [],
+            };
+        }
+
+        function installDetailProvider() {
+            if (atlas && typeof atlas.setGeneDetailProvider === "function") {
+                atlas.setGeneDetailProvider(geneDetailSnapshot);
+            }
+        }
+
+        function attachAtlas(next) {
+            atlas = next || atlas;
+            installDetailProvider();
+            repaint();
+            return atlas;
         }
 
         function renderChips() {
@@ -446,6 +479,7 @@
         renderCellTypes();
         render();
         setLayer(null);
+        installDetailProvider();
 
         // Called once the index is in, or once it is known to be missing. Without an
         // index there is nothing to search, so the box is disabled and the reason is
@@ -475,6 +509,7 @@
             colourFor,
             refreshCellTypes: renderCellTypes,
             setDataAvailable,
+            attachAtlas,
         };
     }
 

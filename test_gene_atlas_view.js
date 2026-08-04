@@ -561,6 +561,85 @@ async function testAFailedGeneFetchIsReportedAndLeavesNoChip() {
   );
 }
 
+// --- region detail provider ---
+
+// The atlas cannot reach the gene payloads, so the view hands it a lookup. Without
+// this the detail panel would have nothing to show when a region is clicked.
+async function testTheViewInstallsAGeneDetailProviderOnTheAtlas() {
+  const installed = [];
+  const { view, data } = boot();
+  view.attachAtlas({
+    applyGeneValues: () => ({}),
+    clearGeneValues: () => ({}),
+    setGeneDetailProvider: (fn) => installed.push(fn),
+  });
+  await view.addGene('GFAP');
+  assert.equal(installed.length, 1, 'the provider is installed once');
+
+  const snapshot = installed[0]('EC');
+  assert.equal(snapshot.symbol, 'GFAP');
+  assert.equal(snapshot.metric, data.metric());
+  assert.equal(snapshot.detailAvailable, true);
+  assert.equal(snapshot.value, 0.637, 'the region value under the active rule');
+  assert.equal(snapshot.support.donors, 43);
+  const astro = snapshot.rows.find((row) => row.cellType === 'Astrocyte');
+  assert.equal(astro.mean, 1.9);
+}
+
+// The panel must reflect the metric and rule the map is drawn with, otherwise the
+// detail contradicts the colours.
+async function testTheProviderFollowsTheActiveMetricAndRule() {
+  const installed = [];
+  const { view } = boot();
+  view.attachAtlas({
+    applyGeneValues: () => ({}),
+    clearGeneValues: () => ({}),
+    setGeneDetailProvider: (fn) => installed.push(fn),
+  });
+  await view.addGene('GFAP');
+  const provider = installed[0];
+
+  view.setRule('donor_balanced');
+  assert.equal(provider('EC').value, 1.15, 'the other aggregation');
+
+  view.setMetric('detection');
+  assert.equal(provider('EC').value, 0.455);
+  assert.equal(provider('EC').metric, 'detection');
+}
+
+async function testTheProviderReportsAMissingDetailTier() {
+  const installed = [];
+  const { view } = boot();
+  view.attachAtlas({
+    applyGeneValues: () => ({}),
+    clearGeneValues: () => ({}),
+    setGeneDetailProvider: (fn) => installed.push(fn),
+  });
+  await view.addGene('SNAP25');
+
+  const snapshot = installed[0]('EC');
+  assert.equal(snapshot.detailAvailable, false, 'SNAP25 is region-level only');
+  assert.equal(snapshot.rows.length, 0, 'no per-class rows to show');
+  assert.equal(snapshot.value, 3.1, 'but the region value is still there');
+}
+
+async function testTheProviderReturnsNoDataForAnUncoveredRegion() {
+  const installed = [];
+  const { view } = boot();
+  view.attachAtlas({
+    applyGeneValues: () => ({}),
+    clearGeneValues: () => ({}),
+    setGeneDetailProvider: (fn) => installed.push(fn),
+  });
+  await view.addGene('GFAP');
+
+  // GFAP has no data in Pn: the value must be absent, never 0.
+  const snapshot = installed[0]('Pn');
+  assert.equal(snapshot.value, null);
+  assert.equal(snapshot.support, null);
+  assert.equal(snapshot.rows.length, 0);
+}
+
 async function main() {
   const cases = [
     ['testSearchListsMatchingSymbols', testSearchListsMatchingSymbols],
@@ -591,6 +670,10 @@ async function main() {
     ['testARegionOnlyGeneDisablesCellTypeFilteringAndSaysWhy', testARegionOnlyGeneDisablesCellTypeFilteringAndSaysWhy],
     ['testSwitchingToAGeneWithDetailReEnablesFiltering', testSwitchingToAGeneWithDetailReEnablesFiltering],
     ['testAFailedGeneFetchIsReportedAndLeavesNoChip', testAFailedGeneFetchIsReportedAndLeavesNoChip],
+    ['testTheViewInstallsAGeneDetailProviderOnTheAtlas', testTheViewInstallsAGeneDetailProviderOnTheAtlas],
+    ['testTheProviderFollowsTheActiveMetricAndRule', testTheProviderFollowsTheActiveMetricAndRule],
+    ['testTheProviderReportsAMissingDetailTier', testTheProviderReportsAMissingDetailTier],
+    ['testTheProviderReturnsNoDataForAnUncoveredRegion', testTheProviderReturnsNoDataForAnUncoveredRegion],
   ];
   for (const [name, fn] of cases) {
     await fn();

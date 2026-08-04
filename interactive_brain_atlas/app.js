@@ -99,6 +99,7 @@
     // is absent from this table has no data and must never be drawn as a zero.
     geneValues: null,
     geneMetric: "mean",
+    geneDetailProvider: null,
     anatomyStyle: "boundaries",
     connectivityPercentile: 96,
     selectedRegion: null,
@@ -2014,6 +2015,157 @@
     });
   }
 
+  // --- gene expression detail panel ---
+  //
+  // The atlas never computes gene numbers; it asks the host's provider and renders
+  // whatever comes back. A class absent from `rows` has no cells at all in this
+  // region, which is a different statement from "expression measured as zero", so
+  // it is labelled rather than drawn as an empty bar at 0.
+
+  function geneDetailFor(region) {
+    if (!state.geneDetailProvider) return null;
+    try {
+      return state.geneDetailProvider(region.acronym) || null;
+    } catch (error) {
+      // A broken provider must not take the whole panel down with it.
+      return null;
+    }
+  }
+
+  function geneMetricLabel(metric) {
+    return metric === "detection" ? "detection rate" : "mean expression";
+  }
+
+  function geneFocusLabel(gene) {
+    if (!gene || !gene.symbol) return "Gene expression";
+    return `${gene.symbol} · ${geneMetricLabel(gene.metric || state.geneMetric)}`;
+  }
+
+  function formatGeneValue(value, metric) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+    return (metric || state.geneMetric) === "detection"
+      ? formatPercent(value)
+      : value.toFixed(3);
+  }
+
+  function geneSwatchColour(gene) {
+    const value = gene && gene.value;
+    if (typeof value !== "number" || !Number.isFinite(value)) return "#4b5566";
+    const { min, max } = getRange();
+    const span = max - min;
+    return spectrumColor(span > 0 ? (value - min) / span : 1, 1);
+  }
+
+  function geneSupportLabel(gene) {
+    if (!gene) return "Gene expression";
+    const support = gene.support;
+    if (!support) return "No data in this region";
+    const datasets = Number(support.datasets) || 0;
+    const donors = Number(support.donors) || 0;
+    const cells = Number(support.cells) || 0;
+    return `${datasets.toLocaleString()} datasets · ${donors.toLocaleString()} donors · ${cells.toLocaleString()} cells`;
+  }
+
+  function geneRankBadge(region, gene) {
+    if (!gene || typeof gene.value !== "number" || !Number.isFinite(gene.value)) {
+      return "No data";
+    }
+    const ranked = state.regions
+      .filter((candidate) => candidate.hasAnatomy)
+      .map((candidate) => ({ acronym: candidate.acronym, value: geneValueFor(candidate) }))
+      .filter((entry) => entry.value !== null)
+      .sort((a, b) => b.value - a.value);
+    const rank = ranked.findIndex((entry) => entry.acronym === region.acronym) + 1;
+    return rank > 0 ? `#${rank} of ${ranked.length}` : `${ranked.length} with data`;
+  }
+
+  function geneNoticeRow(text) {
+    const row = document.createElement("div");
+    row.className = "composition-row composition-notice";
+    const label = document.createElement("span");
+    label.textContent = text;
+    row.append(label);
+    return row;
+  }
+
+  function renderGeneComposition(gene) {
+    if (!gene) {
+      dom.compositionBars.append(
+        geneNoticeRow("Pick a gene to see its per-class values here."),
+      );
+      return;
+    }
+    if (gene.detailAvailable === false) {
+      dom.compositionBars.append(
+        geneNoticeRow(
+          `${gene.symbol || "This gene"} ships region-level values only, so the per-class breakdown is not available.`,
+        ),
+      );
+      return;
+    }
+
+    const metric = gene.metric || state.geneMetric;
+    const byType = new Map();
+    (gene.rows || []).forEach((entry) => {
+      if (entry && entry.cellType) byType.set(entry.cellType, entry);
+    });
+    if (!byType.size) {
+      dom.compositionBars.append(
+        geneNoticeRow("No cells of any class were measured in this region."),
+      );
+      return;
+    }
+
+    const values = [...byType.values()]
+      .map((entry) => entry[metric])
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    const maxValue = metric === "detection" ? 1 : Math.max(...values, 0);
+
+    // Ordered by value with the measured classes first, so the ones carrying data
+    // are at the top and the absent ones collect at the bottom.
+    state.cellTypes
+      .map((cellType) => {
+        const entry = byType.get(cellType);
+        const raw = entry ? entry[metric] : undefined;
+        const measured = typeof raw === "number" && Number.isFinite(raw);
+        return { cellType, value: measured ? raw : null, cells: entry ? entry.cells : 0 };
+      })
+      .sort((a, b) => {
+        if (a.value === null && b.value === null) return a.cellType.localeCompare(b.cellType);
+        if (a.value === null) return 1;
+        if (b.value === null) return -1;
+        return b.value - a.value;
+      })
+      .forEach(({ cellType, value, cells }) => {
+        const row = document.createElement("div");
+        row.className = `composition-row${value === null ? " composition-missing" : ""}`;
+
+        const label = document.createElement("span");
+        label.textContent = cellType;
+        row.append(label);
+
+        const readout = document.createElement("strong");
+        readout.textContent = value === null ? "No data" : formatGeneValue(value, metric);
+        row.append(readout);
+
+        const track = document.createElement("div");
+        track.className = "bar-track";
+        if (value !== null) {
+          const fill = document.createElement("div");
+          fill.className = "bar-fill";
+          fill.style.width = `${maxValue > 0 ? (value / maxValue) * 100 : 0}%`;
+          track.append(fill);
+          // The cell count is the weight behind this class's mean.
+          row.title = `${cellType}: ${formatGeneValue(value, metric)} from ${(Number(cells) || 0).toLocaleString()} cells`;
+        } else {
+          row.title = `${cellType}: no cells of this class were measured in this region`;
+        }
+        row.append(track);
+
+        dom.compositionBars.append(row);
+      });
+  }
+
   function updateDetail(region, options = {}) {
     const preserveConnection = Boolean(options.preserveConnection);
     if (!region) {
@@ -2052,25 +2204,35 @@
     const focusCellType = allMode ? dominant.cellType : state.selectedCellType;
     const value = region.composition[focusCellType] || 0;
     const cellLayer = state.dataLayer === "cells";
-    const connections = cellLayer ? [] : getRegionConnections(region);
-    const connectionConfig = cellLayer ? null : connectivityConfig();
+    const geneLayer = state.dataLayer === "genes";
+    // Asked once per selection: the panel below reports value, support and the
+    // per-class breakdown from the same snapshot.
+    const gene = geneLayer ? geneDetailFor(region) : null;
+    const connections = cellLayer || geneLayer ? [] : getRegionConnections(region);
+    const connectionConfig = cellLayer || geneLayer ? null : connectivityConfig();
     dom.focusLabel.textContent = cellLayer
       ? allMode
         ? `Dominant · ${dominant.cellType}`
         : state.selectedCellType
-      : connections.length
-        ? `Strongest ${connectionConfig.shortLabel} weight`
-        : connectionConfig.title;
+      : geneLayer
+        ? geneFocusLabel(gene)
+        : connections.length
+          ? `Strongest ${connectionConfig.shortLabel} weight`
+          : connectionConfig.title;
     dom.focusValue.textContent = cellLayer
       ? formatPercent(value)
-      : connections.length
-        ? connections[0].value.toFixed(3)
-        : "—";
+      : geneLayer
+        ? formatGeneValue(gene && gene.value, gene && gene.metric)
+        : connections.length
+          ? connections[0].value.toFixed(3)
+          : "—";
     const focusColor = cellLayer
       ? colors[focusCellType] || "#61ddb2"
-      : connections.length
-        ? spectrumColor(spectrumPosition(connections[0].percentile), 1)
-        : connectionConfig.color;
+      : geneLayer
+        ? geneSwatchColour(gene)
+        : connections.length
+          ? spectrumColor(spectrumPosition(connections[0].percentile), 1)
+          : connectionConfig.color;
     dom.focusSwatch.style.background = focusColor;
     dom.focusSwatch.style.color = focusColor;
     dom.detailDataStatus.textContent = cellLayer
@@ -2079,7 +2241,9 @@
         : state.dataStatus === "observed"
           ? "Imported composition"
           : "Illustrative"
-      : `${connectionConfig.shortLabel} project matrix`;
+      : geneLayer
+        ? geneSupportLabel(gene)
+        : `${connectionConfig.shortLabel} project matrix`;
     const geometryStatus = region.geometryMapping?.status;
     dom.detailGeometryStatus.textContent = region.isGroup
       ? "Aggregate; no single parcel"
@@ -2095,7 +2259,9 @@
     dom.detailMappingBasis.textContent =
       region.geometryMapping?.basis || "No single anatomical crosswalk.";
 
-    if (!cellLayer) {
+    if (geneLayer) {
+      dom.rankBadge.textContent = geneRankBadge(region, gene);
+    } else if (!cellLayer) {
       dom.rankBadge.textContent = connections.length
         ? `${connectivity.metadata.regionCount}-region matrix`
         : "No connectivity";
@@ -2119,6 +2285,10 @@
     }
 
     dom.compositionBars.replaceChildren();
+    if (geneLayer) {
+      renderGeneComposition(gene);
+      return;
+    }
     const maxValue = Math.max(...state.cellTypes.map((cellType) => region.composition[cellType] || 0));
     state.cellTypes
       .map((cellType) => ({
@@ -2866,6 +3036,25 @@
       state.geneValues = null;
       selectDataLayer("cells");
       return this.geneSummary();
+    },
+
+    // The atlas has no access to the gene payloads, so the host injects a lookup:
+    // provider(acronym) -> { symbol, metric, value, support, detailAvailable, rows }
+    // with rows = [{ cellType, mean, detection, cells }]. An absent class means no
+    // data, never zero.
+    setGeneDetailProvider(provider) {
+      state.geneDetailProvider = typeof provider === "function" ? provider : null;
+      if (state.selectedRegion && state.dataLayer === "genes") {
+        updateDetail(state.selectedRegion, { preserveConnection: true });
+      }
+    },
+
+    // Opens the detail panel for an acronym, the same path a canvas click takes.
+    selectRegion(acronym) {
+      const region = state.regions.find((candidate) => candidate.acronym === acronym);
+      if (!region) return false;
+      updateDetail(region);
+      return true;
     },
 
     // Read-only view used by the gene search row for its legend and "n regions

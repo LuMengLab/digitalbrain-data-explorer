@@ -42,6 +42,7 @@
             cellTypeSection: doc.getElementById("geneCellTypeSection"),
             cellTypeList: doc.getElementById("geneCellTypeList"),
             cellTypeReset: doc.getElementById("geneCellTypeReset"),
+            detailNote: doc.getElementById("geneDetailNote"),
             dataNote: doc.getElementById("geneDataNote"),
         };
 
@@ -145,9 +146,18 @@
             });
         }
 
+        // Cell-type filtering is computed from the detail tier, which only ships for
+        // a curated subset of genes. Ask before offering the control.
+        function canFilter(symbol) {
+            if (!symbol) return true;
+            if (typeof data.canFilterByCellType !== "function") return true;
+            return data.canFilterByCellType(symbol);
+        }
+
         function renderCellTypes() {
             if (!dom.cellTypeList) return;
             const types = data.cellTypes();
+            const filterable = canFilter(state.active);
             dom.cellTypeList.textContent = "";
             types.forEach((type) => {
                 const row = doc.createElement("label");
@@ -159,6 +169,7 @@
                 box.dataset.cellTypeBox = type;
                 // No filter means every class contributes, so they all read as ticked.
                 box.checked = !state.filter || state.filter.indexOf(type) !== -1;
+                box.disabled = !filterable;
                 row.appendChild(box);
 
                 const name = doc.createElement("span");
@@ -167,6 +178,20 @@
 
                 dom.cellTypeList.appendChild(row);
             });
+            syncDetailNote(filterable);
+        }
+
+        // A greyed-out control with no explanation reads as a broken build, so name
+        // the gene and say what the map is showing instead.
+        function syncDetailNote(filterable) {
+            if (!dom.detailNote) return;
+            if (!state.active || filterable) {
+                dom.detailNote.hidden = true;
+                dom.detailNote.textContent = "";
+                return;
+            }
+            dom.detailNote.hidden = false;
+            dom.detailNote.textContent = `${state.active} ships region-level values only, so filtering by cell class is unavailable. The atlas shows all classes combined.`;
         }
 
         function syncTabs(container, attribute, value) {
@@ -218,6 +243,7 @@
 
         function render() {
             renderChips();
+            renderCellTypes();
             syncTabs(dom.metricTabs, "metric", data.metric());
             syncTabs(dom.ruleTabs, "rule", data.rule());
             syncRuleNote();
@@ -229,21 +255,67 @@
             return text;
         }
 
-        function setActive(symbol) {
-            if (state.genes.indexOf(symbol) === -1) return;
-            state.active = symbol;
-            render();
-            repaint();
+        // Everything this gene needs before it can be drawn: the region tier, plus the
+        // detail tier when the gene has one (loadGeneDetail resolves to null without a
+        // request for the ~19.2k region-only genes).
+        function isReady(symbol) {
+            if (typeof data.isLoaded === "function" && !data.isLoaded(symbol)) return false;
+            if (typeof data.hasDetail !== "function") return true;
+            if (!data.hasDetail(symbol)) return true;
+            return typeof data.isDetailLoaded === "function" && data.isDetailLoaded(symbol);
         }
 
-        function addGene(symbol) {
-            if (!symbol) return;
+        function ensureLoaded(symbol) {
+            return Promise.resolve()
+                .then(() => (data.isLoaded(symbol) ? null : data.loadGene(symbol)))
+                .then(() =>
+                    typeof data.loadGeneDetail === "function"
+                        ? data.loadGeneDetail(symbol)
+                        : null,
+                );
+        }
+
+        // A chip whose file never arrived would paint nothing and look like a gene
+        // with no expression anywhere, so name the failure instead.
+        function reportLoadFailure(symbol) {
+            if (!dom.dataNote) return;
+            dom.dataNote.hidden = false;
+            dom.dataNote.textContent = `Could not load data for ${symbol}. The gene may be missing from this build.`;
+        }
+
+        function commit(symbol) {
             if (state.genes.indexOf(symbol) === -1) {
                 state.genes.push(symbol);
             }
             state.active = symbol;
             render();
             repaint();
+            return symbol;
+        }
+
+        // Resolves once the gene is drawn (or known to have failed). Already-loaded
+        // genes commit synchronously so a click repaints in the same frame.
+        function activate(symbol) {
+            if (isReady(symbol)) {
+                commit(symbol);
+                return Promise.resolve(symbol);
+            }
+            return ensureLoaded(symbol)
+                .then(() => commit(symbol))
+                .catch(() => {
+                    reportLoadFailure(symbol);
+                    return null;
+                });
+        }
+
+        function setActive(symbol) {
+            if (state.genes.indexOf(symbol) === -1) return Promise.resolve(null);
+            return activate(symbol);
+        }
+
+        function addGene(symbol) {
+            if (!symbol) return Promise.resolve(null);
+            return activate(symbol);
         }
 
         function removeGene(symbol) {

@@ -1,17 +1,25 @@
 // Gene atlas data layer: fetches per-gene payloads on demand and turns them into
 // a { regionAcronym: value } table for the atlas renderer. No DOM access.
 //
-// Payload layout (one file per gene, see scripts/export_gene_atlas_web.py):
-//   { symbol, ensembl, <rule>: { regions: { mean, detection },
-//                                cellTypes: { REGION: { TYPE: {mean,detection,cells} } },
-//                                support:   { REGION: {datasets,donors,cells} } } }
+// Two-tier payload (see scripts/export_gene_atlas_web.py). Region-level colouring
+// covers all ~19.3k protein-coding genes; the region x cellType breakdown is ~20x
+// larger per gene, so it ships only for a curated subset and loads on demand:
 //
-// Two invariants the whole layer rests on:
+//   genes/<SYMBOL>.json         { symbol, ensembl, hasDetail,
+//                                 support: { REGION: {datasets,donors,cells} },
+//                                 <rule>: { regions: { mean, detection } } }
+//   genes/<SYMBOL>.detail.json  { symbol,
+//                                 <rule>: { cellTypes: { REGION: { TYPE: {mean,detection,cells} } } } }
+//
+// Three invariants the whole layer rests on:
 //   1. Missing != zero. A region with no data is absent from the returned table so
 //      the renderer can paint it neutral grey and keep it out of the colour range.
 //   2. A cell-type subset is recomputed with the *same* rule as the global value:
 //      cell_weighted weights by cell count, donor_balanced weights types equally.
 //      Otherwise "all types selected" would disagree with no filter at all.
+//   3. Cell-type filtering needs the detail tier. Callers must ask
+//      canFilterByCellType() before offering the control, because without detail
+//      the only honest answer is the all-types region value.
 (function (global) {
     const RULES = ["cell_weighted", "donor_balanced"];
     const METRICS = ["mean", "detection"];
@@ -19,8 +27,10 @@
     const state = {
         base: "gene_atlas_web",
         index: null,
-        genes: {},        // symbol -> payload
-        pending: {},      // symbol -> in-flight promise, so one fetch per gene
+        genes: {},          // symbol -> region-level payload
+        details: {},        // symbol -> detail payload
+        pending: {},        // symbol -> in-flight promise, so one fetch per gene
+        pendingDetail: {},  // symbol -> in-flight detail promise
         rule: "cell_weighted",
         metric: "mean",
     };
@@ -33,6 +43,12 @@
     function ingestGene(payload) {
         if (!payload || !payload.symbol) return null;
         state.genes[payload.symbol] = payload;
+        return payload;
+    }
+
+    function ingestGeneDetail(payload) {
+        if (!payload || !payload.symbol) return null;
+        state.details[payload.symbol] = payload;
         return payload;
     }
 
@@ -72,6 +88,26 @@
         return Object.prototype.hasOwnProperty.call(state.genes, symbol);
     }
 
+    function isDetailLoaded(symbol) {
+        return Object.prototype.hasOwnProperty.call(state.details, symbol);
+    }
+
+    // Whether a cellType breakdown exists on the server at all. Answered from the
+    // index so the UI can settle the question before fetching anything; falls back
+    // to the gene payload's own flag when the index has not arrived yet.
+    function hasDetail(symbol) {
+        const listed = state.index && state.index.detailGenes;
+        if (Array.isArray(listed)) {
+            return listed.indexOf(symbol) !== -1;
+        }
+        const payload = state.genes[symbol];
+        return Boolean(payload && payload.hasDetail);
+    }
+
+    function canFilterByCellType(symbol) {
+        return hasDetail(symbol) && isDetailLoaded(symbol);
+    }
+
     // Case-insensitive prefix search over the index; misses return an empty list
     // rather than throwing, so the UI can render an explicit empty state.
     function search(query) {
@@ -85,6 +121,12 @@
 
     function bucket(symbol) {
         const payload = state.genes[symbol];
+        if (!payload) return null;
+        return payload[state.rule] || null;
+    }
+
+    function detailBucket(symbol) {
+        const payload = state.details[symbol];
         if (!payload) return null;
         return payload[state.rule] || null;
     }
@@ -120,14 +162,17 @@
         const data = bucket(symbol);
         if (!data) return {};
 
+        const regionTable = (data.regions && data.regions[state.metric]) || {};
         const selected = options && options.cellTypes;
-        if (!selected || !selected.length) {
-            const table = (data.regions && data.regions[state.metric]) || {};
+        const detail = detailBucket(symbol);
+        // No filter requested, or no detail tier to compute one from: the region
+        // value (all cell types mixed) is the only figure we can stand behind.
+        if (!selected || !selected.length || !detail || !detail.cellTypes) {
             // Copy so callers cannot mutate the cached payload.
-            return Object.assign({}, table);
+            return Object.assign({}, regionTable);
         }
 
-        const perRegion = data.cellTypes || {};
+        const perRegion = detail.cellTypes;
         const values = {};
         Object.keys(perRegion).forEach((region) => {
             const value = recomputeRegion(perRegion[region], selected);
@@ -138,9 +183,9 @@
     }
 
     function cellTypeDetail(symbol, region) {
-        const data = bucket(symbol);
-        if (!data || !data.cellTypes) return [];
-        const perType = data.cellTypes[region];
+        const detail = detailBucket(symbol);
+        if (!detail || !detail.cellTypes) return [];
+        const perType = detail.cellTypes[region];
         if (!perType) return [];
         return Object.keys(perType)
             .sort()
@@ -152,10 +197,12 @@
             }));
     }
 
+    // support is rule-independent evidence, so it lives at the top level of the
+    // region-level payload rather than once per aggregation rule.
     function regionSupport(symbol, region) {
-        const data = bucket(symbol);
-        if (!data || !data.support) return null;
-        return data.support[region] || null;
+        const payload = state.genes[symbol];
+        if (!payload || !payload.support) return null;
+        return payload.support[region] || null;
     }
 
     function fetchJson(url) {
@@ -199,10 +246,37 @@
         return request;
     }
 
+    // Resolves to null for the ~19.2k genes that ship region-level only, without
+    // issuing a request that could only 404.
+    function loadGeneDetail(symbol) {
+        if (!hasDetail(symbol)) {
+            return Promise.resolve(null);
+        }
+        if (isDetailLoaded(symbol)) {
+            return Promise.resolve(state.details[symbol]);
+        }
+        if (state.pendingDetail[symbol]) {
+            return state.pendingDetail[symbol];
+        }
+        const request = fetchJson(`${state.base}/genes/${symbol}.detail.json`)
+            .then((payload) => {
+                delete state.pendingDetail[symbol];
+                return ingestGeneDetail(payload);
+            })
+            .catch((error) => {
+                delete state.pendingDetail[symbol];
+                throw error;
+            });
+        state.pendingDetail[symbol] = request;
+        return request;
+    }
+
     function reset() {
         state.index = null;
         state.genes = {};
+        state.details = {};
         state.pending = {};
+        state.pendingDetail = {};
         state.rule = "cell_weighted";
         state.metric = "mean";
     }
@@ -212,6 +286,7 @@
         METRICS,
         ingestIndex,
         ingestGene,
+        ingestGeneDetail,
         setRule,
         setMetric,
         rule,
@@ -219,12 +294,16 @@
         scope,
         cellTypes,
         isLoaded,
+        isDetailLoaded,
+        hasDetail,
+        canFilterByCellType,
         search,
         regionValues,
         cellTypeDetail,
         regionSupport,
         loadIndex,
         loadGene,
+        loadGeneDetail,
         reset,
     };
     global.GeneAtlasData = api;

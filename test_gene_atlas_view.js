@@ -12,28 +12,21 @@ const { JSDOM } = require('jsdom');
 
 const WEB_DIR = __dirname;
 
-// EC has Astrocyte + Microglia, SWM only Astrocyte, and the two rules disagree on
-// EC (0.637 cell-weighted vs 1.15 donor-balanced) so a rule switch is observable.
+// Two-tier payloads (see scripts/export_gene_atlas_web.py). GFAP ships a cellType
+// breakdown, SNAP25 is region-level only, and the two rules disagree on GFAP's EC
+// (0.637 cell-weighted vs 1.15 donor-balanced) so a rule switch is observable.
 const FIXTURE_GFAP = {
   symbol: 'GFAP',
   ensembl: 'ENSG00000131095',
+  hasDetail: true,
+  support: {
+    EC: { datasets: 12, donors: 43, cells: 40 },
+    SWM: { datasets: 3, donors: 8, cells: 20 },
+  },
   cell_weighted: {
     regions: {
       mean: { EC: 0.637, SWM: 1.266 },
       detection: { EC: 0.297, SWM: 0.42 },
-    },
-    cellTypes: {
-      EC: {
-        Astrocyte: { mean: 1.9, detection: 0.81, cells: 30 },
-        Microglia: { mean: 0.4, detection: 0.1, cells: 10 },
-      },
-      SWM: {
-        Astrocyte: { mean: 1.266, detection: 0.42, cells: 20 },
-      },
-    },
-    support: {
-      EC: { datasets: 12, donors: 43, cells: 40 },
-      SWM: { datasets: 3, donors: 8, cells: 20 },
     },
   },
   donor_balanced: {
@@ -41,6 +34,12 @@ const FIXTURE_GFAP = {
       mean: { EC: 1.15, SWM: 1.266 },
       detection: { EC: 0.455, SWM: 0.42 },
     },
+  },
+};
+
+const FIXTURE_GFAP_DETAIL = {
+  symbol: 'GFAP',
+  cell_weighted: {
     cellTypes: {
       EC: {
         Astrocyte: { mean: 1.9, detection: 0.81, cells: 30 },
@@ -50,26 +49,39 @@ const FIXTURE_GFAP = {
         Astrocyte: { mean: 1.266, detection: 0.42, cells: 20 },
       },
     },
-    support: {
-      EC: { datasets: 12, donors: 43, cells: 40 },
-      SWM: { datasets: 3, donors: 8, cells: 20 },
+  },
+  donor_balanced: {
+    cellTypes: {
+      EC: {
+        Astrocyte: { mean: 1.9, detection: 0.81, cells: 30 },
+        Microglia: { mean: 0.4, detection: 0.1, cells: 10 },
+      },
+      SWM: {
+        Astrocyte: { mean: 1.266, detection: 0.42, cells: 20 },
+      },
     },
   },
 };
 
+// Region-level only, like the ~19.2k genes outside the curated detail list.
 const FIXTURE_SNAP25 = {
   symbol: 'SNAP25',
   ensembl: 'ENSG00000132639',
-  cell_weighted: {
-    regions: { mean: { EC: 3.1 }, detection: { EC: 0.95 } },
-    cellTypes: { EC: { Microglia: { mean: 3.1, detection: 0.95, cells: 10 } } },
-    support: { EC: { datasets: 5, donors: 9, cells: 10 } },
-  },
-  donor_balanced: {
-    regions: { mean: { EC: 3.1 }, detection: { EC: 0.95 } },
-    cellTypes: { EC: { Microglia: { mean: 3.1, detection: 0.95, cells: 10 } } },
-    support: { EC: { datasets: 5, donors: 9, cells: 10 } },
-  },
+  hasDetail: false,
+  support: { EC: { datasets: 5, donors: 9, cells: 10 } },
+  cell_weighted: { regions: { mean: { EC: 3.1 }, detection: { EC: 0.95 } } },
+  donor_balanced: { regions: { mean: { EC: 3.1 }, detection: { EC: 0.95 } } },
+};
+
+// Never pre-ingested: the tests use it to check that picking a gene actually
+// fetches its file.
+const FIXTURE_GAD1 = {
+  symbol: 'GAD1',
+  ensembl: 'ENSG00000128683',
+  hasDetail: false,
+  support: { Pn: { datasets: 2, donors: 4, cells: 88 } },
+  cell_weighted: { regions: { mean: { Pn: 2.5 }, detection: { Pn: 0.7 } } },
+  donor_balanced: { regions: { mean: { Pn: 2.5 }, detection: { Pn: 0.7 } } },
 };
 
 const FIXTURE_INDEX = {
@@ -80,6 +92,15 @@ const FIXTURE_INDEX = {
     SNAP25: 'genes/SNAP25.json',
     GAD1: 'genes/GAD1.json',
   },
+  detailGenes: ['GFAP'],
+};
+
+const FILES = {
+  'genes/GFAP.json': FIXTURE_GFAP,
+  'genes/GFAP.detail.json': FIXTURE_GFAP_DETAIL,
+  'genes/SNAP25.json': FIXTURE_SNAP25,
+  'genes/GAD1.json': FIXTURE_GAD1,
+  'index.json': FIXTURE_INDEX,
 };
 
 function runIn(context, file) {
@@ -108,7 +129,8 @@ function stubAtlas() {
   };
 }
 
-function boot() {
+function boot(options) {
+  const settings = options || {};
   const html = fs
     .readFileSync(path.join(WEB_DIR, 'digitalneuron_main.html'), 'utf8')
     .replace(/<script[\s\S]*?<\/script>/g, '');
@@ -118,12 +140,26 @@ function boot() {
   // rather than the vm.Context itself.
   const context = dom.getInternalVMContext();
 
+  // Serves the fixture tree so the view can be observed actually fetching.
+  const requests = [];
+  window.fetch = (url) => {
+    requests.push(url);
+    const key = Object.keys(FILES).find((name) => String(url).endsWith(name));
+    if (!key || (settings.missing || []).indexOf(key) !== -1) {
+      return Promise.resolve({ ok: false, status: 404 });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(FILES[key]) });
+  };
+
   runIn(context, 'gene-atlas-data.js');
   const data = window.GeneAtlasData;
   data.reset();
   data.ingestIndex(FIXTURE_INDEX);
-  data.ingestGene(FIXTURE_GFAP);
-  data.ingestGene(FIXTURE_SNAP25);
+  if (settings.preload !== false) {
+    data.ingestGene(FIXTURE_GFAP);
+    data.ingestGeneDetail(FIXTURE_GFAP_DETAIL);
+    data.ingestGene(FIXTURE_SNAP25);
+  }
 
   runIn(context, 'gene-atlas-view.js');
   assert.ok(window.GeneAtlasView, 'gene-atlas-view.js should expose GeneAtlasView');
@@ -135,7 +171,7 @@ function boot() {
     data,
     atlas,
   });
-  return { window, document: window.document, data, atlas, view };
+  return { window, document: window.document, data, atlas, view, requests };
 }
 
 function chipLabels(document) {
@@ -423,6 +459,108 @@ async function testBootstrapWithoutAGeneExportHidesTheCellClassSection() {
   assert.equal(document.getElementById('geneCellTypeSection').hidden, true);
 }
 
+// --- on-demand loading (two-tier payload) ---
+
+// The whole point of the per-gene file layout: 19k genes cannot be shipped up
+// front, so picking one has to fetch it. Without this the map stays blank and
+// the gene looks like it has no data anywhere.
+async function testPickingAnUnloadedGeneFetchesItAndPaints() {
+  const { document, atlas, view, requests } = boot();
+  assert.equal(view.activeGene(), null);
+
+  await view.addGene('GAD1');
+
+  assert.ok(
+    requests.some((url) => String(url).endsWith('genes/GAD1.json')),
+    `the gene file must be fetched, got ${JSON.stringify(requests)}`,
+  );
+  assert.deepEqual(chipLabels(document), ['GAD1']);
+  const painted = atlas.last();
+  assert.equal(painted.kind, 'apply');
+  assert.equal(painted.values.Pn, 2.5, 'the fetched values must reach the atlas');
+}
+
+async function testAnAlreadyLoadedGeneIsNotRefetched() {
+  const { view, requests } = boot();
+  await view.addGene('GFAP');
+  assert.equal(
+    requests.filter((url) => String(url).endsWith('genes/GFAP.json')).length,
+    0,
+    'a preloaded gene must not trigger a request',
+  );
+}
+
+// The detail tier is what cell-type filtering computes from, so it has to arrive
+// with the gene rather than on first tick of a checkbox.
+async function testPickingAGeneWithDetailAlsoFetchesTheDetailTier() {
+  const { view, requests, data } = boot({ preload: false });
+  await view.addGene('GFAP');
+
+  assert.ok(
+    requests.some((url) => String(url).endsWith('genes/GFAP.detail.json')),
+    `the detail file must be fetched, got ${JSON.stringify(requests)}`,
+  );
+  assert.equal(data.canFilterByCellType('GFAP'), true);
+}
+
+async function testPickingARegionOnlyGeneSkipsTheDetailRequest() {
+  const { view, requests } = boot({ preload: false });
+  await view.addGene('GAD1');
+
+  assert.equal(
+    requests.filter((url) => String(url).endsWith('.detail.json')).length,
+    0,
+    'a region-level gene has no detail file; requesting it would only 404',
+  );
+}
+
+// A greyed-out control with no explanation reads as a bug. State plainly that
+// this gene ships region level only.
+async function testARegionOnlyGeneDisablesCellTypeFilteringAndSaysWhy() {
+  const { document, view } = boot();
+  await view.addGene('SNAP25');
+
+  const boxes = [...document.querySelectorAll('#geneCellTypeList [data-cell-type-box]')];
+  assert.ok(boxes.length, 'the classes are still listed');
+  assert.ok(
+    boxes.every((box) => box.disabled),
+    'every checkbox must be disabled without a detail tier',
+  );
+  const note = document.getElementById('geneDetailNote');
+  assert.ok(note, 'there must be a note element for the detail-unavailable state');
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent, /SNAP25/);
+  assert.match(note.textContent, /region/i);
+}
+
+async function testSwitchingToAGeneWithDetailReEnablesFiltering() {
+  const { document, view } = boot();
+  await view.addGene('SNAP25');
+  await view.addGene('GFAP');
+
+  const boxes = [...document.querySelectorAll('#geneCellTypeList [data-cell-type-box]')];
+  assert.ok(
+    boxes.every((box) => !box.disabled),
+    'GFAP ships a detail tier, so the filter comes back',
+  );
+  assert.equal(document.getElementById('geneDetailNote').hidden, true);
+}
+
+// A failed fetch must not leave a chip that paints nothing: say what happened.
+async function testAFailedGeneFetchIsReportedAndLeavesNoChip() {
+  const { document, atlas, view } = boot({ missing: ['genes/GAD1.json'] });
+  await view.addGene('GAD1');
+
+  assert.deepEqual(chipLabels(document), [], 'a gene that failed to load gets no chip');
+  const note = document.getElementById('geneDataNote');
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent, /GAD1/);
+  assert.ok(
+    !atlas.calls.some((call) => call.kind === 'apply'),
+    'nothing should be painted from a failed load',
+  );
+}
+
 async function main() {
   const cases = [
     ['testSearchListsMatchingSymbols', testSearchListsMatchingSymbols],
@@ -446,6 +584,13 @@ async function main() {
     ['testBootstrapLoadsTheIndexAndFillsTheCellClasses', testBootstrapLoadsTheIndexAndFillsTheCellClasses],
     ['testBootstrapWithoutAGeneExportSaysSo', testBootstrapWithoutAGeneExportSaysSo],
     ['testBootstrapWithoutAGeneExportHidesTheCellClassSection', testBootstrapWithoutAGeneExportHidesTheCellClassSection],
+    ['testPickingAnUnloadedGeneFetchesItAndPaints', testPickingAnUnloadedGeneFetchesItAndPaints],
+    ['testAnAlreadyLoadedGeneIsNotRefetched', testAnAlreadyLoadedGeneIsNotRefetched],
+    ['testPickingAGeneWithDetailAlsoFetchesTheDetailTier', testPickingAGeneWithDetailAlsoFetchesTheDetailTier],
+    ['testPickingARegionOnlyGeneSkipsTheDetailRequest', testPickingARegionOnlyGeneSkipsTheDetailRequest],
+    ['testARegionOnlyGeneDisablesCellTypeFilteringAndSaysWhy', testARegionOnlyGeneDisablesCellTypeFilteringAndSaysWhy],
+    ['testSwitchingToAGeneWithDetailReEnablesFiltering', testSwitchingToAGeneWithDetailReEnablesFiltering],
+    ['testAFailedGeneFetchIsReportedAndLeavesNoChip', testAFailedGeneFetchIsReportedAndLeavesNoChip],
   ];
   for (const [name, fn] of cases) {
     await fn();

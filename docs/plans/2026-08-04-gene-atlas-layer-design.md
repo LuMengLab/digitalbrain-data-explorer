@@ -232,7 +232,7 @@ Stage A 缓存保持 `donor × region × cell_type` 粒度，并记录每组 `n_
 | --- | --- | --- |
 | 脑区（Mod-Brodmann） | `atlas_ontology_term_Mod-Brodmann` | 99/99 |
 | 脑区（Gyral） | `atlas_ontology_term_Gyral` | 99/99 |
-| donor | `donor_id` | 99/99 |
+| donor | `donor_id` 46 / `publication_donor_id` 53 | 99/99（**两种取值**，实测修正） |
 | 细胞类型 | `DigitalNeuron_cell_type` | 97/99 |
 | 细胞类型（备用） | `supercluster_term` | 2/99（HBCA 的 all_neurons / all_non_neurons） |
 

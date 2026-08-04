@@ -48,8 +48,47 @@
         }
     }
 
-    const api = { buildPayload, sync };
+    // Scope filters that select a collection / dataset / donor. They narrow the cell
+    // layer, but the gene layer is a cross-study merge with the dataset axis already
+    // collapsed, so they cannot narrow it and must not look as if they could.
+    const SCOPE_FILTER_IDS = ["collectionSelect", "datasetSelect", "donorSelect"];
+
+    function installScopeGuard(doc, target) {
+        // Snapshot is taken when the gene layer is entered, not at load time: by then
+        // the user may have unlocked the dataset and donor selects, and leaving the
+        // layer must return them to that state, not to the page's initial one.
+        let restore = null;
+
+        function setScopeLocked(locked) {
+            if (locked && !restore) {
+                restore = SCOPE_FILTER_IDS.map((id) => {
+                    const element = doc.getElementById(id);
+                    return { element, disabled: element ? element.disabled : false };
+                });
+            }
+            if (restore) {
+                restore.forEach((entry) => {
+                    if (entry.element) entry.element.disabled = locked ? true : entry.disabled;
+                });
+                if (!locked) restore = null;
+            }
+            const note = doc.getElementById("geneScopeNote");
+            if (note) note.hidden = !locked;
+        }
+
+        target.addEventListener("digitalbrain-atlas-layer", (event) => {
+            const detail = event && event.detail;
+            setScopeLocked(!!detail && detail.layer === "genes");
+        });
+    }
+
+    const api = { buildPayload, sync, installScopeGuard };
     global.AtlasBridge = api;
+    // The atlas announces its layer as soon as it boots, and this file is loaded
+    // before it, so the guard is listening in time for that first announcement.
+    if (global.document && typeof global.addEventListener === "function") {
+        installScopeGuard(global.document, global);
+    }
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     }

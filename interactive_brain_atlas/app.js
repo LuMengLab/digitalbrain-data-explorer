@@ -649,7 +649,11 @@
 
   function getVisibleRegions() {
     let anatomicallyMapped = state.regions.filter((region) => region.hasAnatomy);
-    if (state.linkedActiveRegions) {
+    // The gene layer is global by construction: its data is a cross-study merge with
+    // the dataset axis collapsed, so the Explorer's current selection does not apply.
+    // Without this bypass the scope would silently crop the layer, which reads as
+    // "the gene is not expressed here" when it is really a filter artefact.
+    if (state.linkedActiveRegions && state.dataLayer !== "genes") {
       anatomicallyMapped = anatomicallyMapped.filter((region) =>
         state.linkedActiveRegions.has(region.acronym),
       );
@@ -1739,24 +1743,46 @@
 
   function syncDataLayerControls() {
     const cellLayer = state.dataLayer === "cells";
+    const geneLayer = state.dataLayer === "genes";
+    // Three modes, not two: the genes layer draws region markers like the cells
+    // layer, so it keeps the marker legend and hides the connectivity chrome, but
+    // it has no cell-class threshold or per-region composition of its own.
+    const markerLayer = cellLayer || geneLayer;
     document.querySelectorAll("[data-layer]").forEach((button) => {
       button.classList.toggle("active", button.dataset.layer === state.dataLayer);
     });
     dom.abundanceSection.hidden = !cellLayer;
     dom.abundanceFilterSection.hidden = !cellLayer;
-    dom.connectivitySection.hidden = cellLayer;
-    dom.legendConnectivity.hidden = cellLayer;
-    dom.visualKey.hidden = !cellLayer;
-    dom.mappingKey.hidden = !cellLayer;
+    dom.connectivitySection.hidden = markerLayer;
+    dom.legendConnectivity.hidden = markerLayer;
+    dom.visualKey.hidden = !markerLayer;
+    dom.mappingKey.hidden = !markerLayer;
     dom.compositionSection.hidden = !cellLayer;
     dom.connectivityDetailSection.hidden =
-      cellLayer || !state.selectedRegion || state.selectedRegion.isGroup;
+      markerLayer || !state.selectedRegion || state.selectedRegion.isGroup;
     dom.connectionInsightSection.hidden =
-      cellLayer || !state.selectedConnection;
-    dom.interactionHintText.textContent = cellLayer
-      ? "Drag to rotate anatomy · Scroll to zoom · Click a cell-profile marker"
-      : "Drag to rotate anatomy · Scroll to zoom · Click a connectivity node";
-    if (cellLayer) {
+      markerLayer || !state.selectedConnection;
+    dom.interactionHintText.textContent = geneLayer
+      ? "Drag to rotate anatomy · Scroll to zoom · Click a region for its cell-type detail"
+      : cellLayer
+        ? "Drag to rotate anatomy · Scroll to zoom · Click a cell-profile marker"
+        : "Drag to rotate anatomy · Scroll to zoom · Click a connectivity node";
+    if (geneLayer) {
+      const range = getGeneRange();
+      const covered = state.geneValues ? getVisibleRegions().length : 0;
+      dom.datasetStatus.classList.add("observed");
+      dom.datasetStatus.innerHTML = `
+        <span class="status-dot"></span>
+        <span>Gene expression · global scope</span>
+        <strong>${
+          range.min === null
+            ? "no data for this gene"
+            : `${covered} regions with data`
+        }</strong>
+      `;
+      dom.legendSingle.hidden = true;
+      dom.legendAll.hidden = true;
+    } else if (cellLayer) {
       const linked = state.dataStatus === "linked";
       dom.datasetStatus.classList.toggle(
         "observed",
@@ -1793,6 +1819,13 @@
       updateConnectivityRangeBackground();
     }
     updateFunctionFocusDisplay();
+    // Tell the host page which layer is live: gene data is a cross-study merge with
+    // the dataset axis collapsed, so the Explorer must disable its scope filters.
+    window.dispatchEvent(
+      new window.CustomEvent("digitalbrain-atlas-layer", {
+        detail: { layer: state.dataLayer },
+      }),
+    );
   }
 
   function selectDataLayer(layer) {

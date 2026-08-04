@@ -73,6 +73,11 @@ function bootAtlas() {
   });
 
   const context = dom.getInternalVMContext();
+  // Same order as digitalneuron_main.html: the bridge installs the scope guard, so
+  // it has to be listening before the atlas boots and announces its initial layer.
+  vm.runInContext(fs.readFileSync(path.join(WEB_DIR, 'atlas-bridge.js'), 'utf8'), context, {
+    filename: 'atlas-bridge.js',
+  });
   ['data/regions.js', 'data/allen_3d_geometry.js', 'data/connectivity.js', 'data/atlas_knowledge.js', 'app.js']
     .forEach((file) => {
       const code = fs.readFileSync(path.join(ATLAS_DIR, file), 'utf8');
@@ -176,6 +181,125 @@ function testLeavingTheGeneLayerRestoresTheCellsLayer() {
   assert.doesNotThrow(drawOneFrame, 'returning to the cells layer must not throw');
 }
 
+// ── Task 12: scope isolation ──
+
+function applyExplorerScopeOfOneRegion(window, acronym) {
+  // Mimic what AtlasBridge.sync sends when the Explorer has a dataset selected.
+  const regionCells = {};
+  regionCells[acronym] = 1234;
+  window.DigitalBrainAtlas.applyScope({
+    type: 'digitalbrain-scope',
+    scopeKey: 'dataset',
+    scopeLabel: 'Dataset One',
+    selection: { collectionId: 'c', datasetId: 'd', donorId: '' },
+    activeRegions: [acronym],
+    regionCells,
+    cellTypes: ['Astrocyte'],
+    composition: { Astrocyte: 1 },
+    cellStats: { totalCount: 1234 },
+    totalCells: 1234,
+  });
+}
+
+function testGeneLayerBypassesTheExplorerScopeFilter() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 3);
+
+  applyExplorerScopeOfOneRegion(window, picked[0]);
+  drawOneFrame();
+
+  const values = {};
+  picked.forEach((acronym, i) => {
+    values[acronym] = 0.3 + i * 0.2;
+  });
+  atlas.applyGeneValues({ values, metric: 'mean' });
+  drawOneFrame();
+
+  const visible = atlas.geneSummary().regions;
+  // Without the bypass the Explorer scope would silently crop the gene layer down
+  // to picked[0], which reads as "the gene is not expressed in the other regions".
+  assert.deepEqual([...visible].sort(), [...picked].sort(),
+    'the Explorer scope must not crop the gene layer');
+}
+
+function testScopeFiltersAreDisabledInGeneLayer() {
+  const { window, drawOneFrame } = bootAtlas();
+  window.DigitalBrainAtlas.applyGeneValues({ values: {}, metric: 'mean' });
+  drawOneFrame();
+
+  ['collectionSelect', 'datasetSelect', 'donorSelect'].forEach((id) => {
+    const element = window.document.getElementById(id);
+    assert.ok(element, `${id} should exist`);
+    assert.equal(element.disabled, true, `${id} must be disabled in the gene layer`);
+  });
+  const note = window.document.getElementById('geneScopeNote');
+  assert.ok(note, 'a scope note element should exist');
+  assert.equal(note.hidden, false, 'the global-scope note must be visible');
+}
+
+function testLeavingGeneLayerRestoresTheScopeFilters() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const collection = window.document.getElementById('collectionSelect');
+
+  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  drawOneFrame();
+  assert.equal(collection.disabled, true);
+
+  atlas.clearGeneValues();
+  drawOneFrame();
+  assert.equal(collection.disabled, false, 'leaving the gene layer must re-enable the scope');
+  assert.equal(window.document.getElementById('geneScopeNote').hidden, true);
+}
+
+function testConnectivityChromeStaysHiddenInGeneLayer() {
+  const { window, drawOneFrame } = bootAtlas();
+  window.DigitalBrainAtlas.applyGeneValues({ values: {}, metric: 'mean' });
+  drawOneFrame();
+
+  const doc = window.document;
+  // The genes layer draws region markers, so it keeps the marker legend and must
+  // not expose the connectivity threshold controls.
+  assert.equal(doc.getElementById('connectivitySection').hidden, true);
+  assert.equal(doc.getElementById('visualKey').hidden, false);
+  assert.equal(doc.getElementById('mappingKey').hidden, false);
+  // The cell-class threshold belongs to the composition layer only.
+  assert.equal(doc.getElementById('abundanceSection').hidden, true);
+}
+
+function testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  // The dataset and donor selects ship disabled until a collection is chosen, so
+  // restoring them means putting each one back where it was - not enabling it.
+  const dataset = window.document.getElementById('datasetSelect');
+  assert.equal(dataset.disabled, true, 'datasetSelect is expected to start locked');
+
+  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  drawOneFrame();
+  atlas.clearGeneValues();
+  drawOneFrame();
+
+  assert.equal(dataset.disabled, true, 'a filter locked before the gene layer stays locked after it');
+}
+
+function testGeneLayerRestoresFiltersUnlockedByTheHost() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const dataset = window.document.getElementById('datasetSelect');
+  // Stand in for the host having unlocked the select after a collection was picked.
+  dataset.disabled = false;
+
+  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  drawOneFrame();
+  assert.equal(dataset.disabled, true, 'the gene layer locks every scope filter');
+
+  atlas.clearGeneValues();
+  drawOneFrame();
+  assert.equal(dataset.disabled, false, 'leaving restores the state the host had set');
+}
+
 function main() {
   const cases = [
     ['testGeneLayerIsAcceptedByTheLayerWhitelist', testGeneLayerIsAcceptedByTheLayerWhitelist],
@@ -184,6 +308,12 @@ function main() {
     ['testAllMissingGeneValuesDoesNotThrow', testAllMissingGeneValuesDoesNotThrow],
     ['testMissingRegionsAreNotRenderedAsZero', testMissingRegionsAreNotRenderedAsZero],
     ['testLeavingTheGeneLayerRestoresTheCellsLayer', testLeavingTheGeneLayerRestoresTheCellsLayer],
+    ['testGeneLayerBypassesTheExplorerScopeFilter', testGeneLayerBypassesTheExplorerScopeFilter],
+    ['testScopeFiltersAreDisabledInGeneLayer', testScopeFiltersAreDisabledInGeneLayer],
+    ['testLeavingGeneLayerRestoresTheScopeFilters', testLeavingGeneLayerRestoresTheScopeFilters],
+    ['testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked', testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked],
+    ['testGeneLayerRestoresFiltersUnlockedByTheHost', testGeneLayerRestoresFiltersUnlockedByTheHost],
+    ['testConnectivityChromeStaysHiddenInGeneLayer', testConnectivityChromeStaysHiddenInGeneLayer],
   ];
   cases.forEach(([name, fn]) => {
     fn();

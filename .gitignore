@@ -2,6 +2,9 @@ node_modules/
 __pycache__/
 *.pyc
 
+# Stage A 的本地缓存（约 5.7 GB）：可由 scripts/run_gene_atlas_stage_a.py 重建，不入库。
+gene_atlas_cache/
+
 # 交付包内的大体积衍生数据：不使用（44M 版），原始 tarball 在 /data/DigitalBrain/ 可重解压
 digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2/digitalbrain_gene_atlas/public/data/
 digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2/digitalbrain_gene_atlas_data_host/public/data/

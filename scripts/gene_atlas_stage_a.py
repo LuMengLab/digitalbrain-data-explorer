@@ -248,23 +248,32 @@ def cache_path(cache_dir: Path, file_id: str) -> Path:
 
 
 def write_cache(result: StageAResult, out_dir: Path) -> Path:
+    """先写临时文件再原子重命名。
+
+    np.savez_compressed 是增量写：长任务中途被杀会留下截断的 .npz，
+    而续跑只看文件存在就跳过，坐实会静默采用坏缓存。
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     target = cache_path(out_dir, result.file_id)
-    np.savez_compressed(
-        target,
-        file_id=np.array(result.file_id),
-        dataset_id=np.array(result.dataset_id),
-        gene_ids=result.gene_ids,
-        donor=np.array([k.donor for k in result.group_keys]),
-        region=np.array([k.region for k in result.group_keys]),
-        region_gyral=np.array([k.region_gyral for k in result.group_keys]),
-        cell_type=np.array([k.cell_type for k in result.group_keys]),
-        # float32 足够：与上游比对的误差本就在 float32 机器精度量级。
-        mean=result.mean.astype(np.float32),
-        detection=result.detection.astype(np.float32),
-        n_cells=result.n_cells.astype(np.int64),
-    )
+    # 传文件句柄而不是路径，numpy 就不会自行补 .npz 后缀。
+    staging = target.with_name(target.name + ".partial")
+    with open(staging, "wb") as handle:
+        np.savez_compressed(
+            handle,
+            file_id=np.array(result.file_id),
+            dataset_id=np.array(result.dataset_id),
+            gene_ids=result.gene_ids,
+            donor=np.array([k.donor for k in result.group_keys]),
+            region=np.array([k.region for k in result.group_keys]),
+            region_gyral=np.array([k.region_gyral for k in result.group_keys]),
+            cell_type=np.array([k.cell_type for k in result.group_keys]),
+            # float32 足够：与上游比对的误差本就在 float32 机器精度量级。
+            mean=result.mean.astype(np.float32),
+            detection=result.detection.astype(np.float32),
+            n_cells=result.n_cells.astype(np.int64),
+        )
+    staging.replace(target)
     return target
 
 

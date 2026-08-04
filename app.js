@@ -453,11 +453,25 @@ function initializeApp() {
     initializeAtlasControls();
     initializeAtlasListCollapse();
     initializeViewSwitch();
+    initializeGeneAtlas();
     
     // Show initial global aggregated state
     updateView('', '', '');
     
     console.log('DigitalNeuron Explorer initialized successfully');
+}
+
+// Wires the gene search row to the atlas. The index fetch is fire-and-forget: a
+// build without the gene export just leaves the row disabled with a note, and the
+// other three atlas layers keep working.
+function initializeGeneAtlas() {
+    if (!window.GeneAtlasView || !window.GeneAtlasData) return;
+    window.GeneAtlasView.bootstrap({
+        document,
+        window,
+        data: window.GeneAtlasData,
+        atlas: window.DigitalBrainAtlas,
+    });
 }
 
 // Cleanup on page unload

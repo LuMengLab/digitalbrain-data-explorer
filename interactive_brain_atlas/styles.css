@@ -2260,6 +2260,174 @@
   }
 }
 
+/* Gene expression layer -----------------------------------------------------
+   The search row is the only chrome the gene layer adds. It sits between the
+   atlas header and the stage, inside .atlas-embed, so it inherits the dark
+   palette declared there rather than the light page one. */
+
+.gene-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(6, 14, 21, 0.35);
+}
+
+.gene-search-row[hidden] {
+  display: none !important;
+}
+
+.gene-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 210px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(1, 8, 14, 0.45);
+}
+
+.gene-search-field svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--quiet);
+  stroke-width: 1.8;
+}
+
+.gene-search-field input {
+  width: 100%;
+  padding: 9px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.gene-search-field input::placeholder {
+  color: #50656e;
+}
+
+.gene-search-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.gene-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  width: 100%;
+  max-height: 240px;
+  margin-top: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #0e1b25;
+  box-shadow: var(--shadow);
+}
+
+.gene-search-results[hidden] {
+  display: none !important;
+}
+
+.gene-search-option {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gene-search-option:hover {
+  background: rgba(83, 215, 174, 0.12);
+  color: var(--accent-strong);
+}
+
+.gene-search-empty {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.gene-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* --gene-colour is set per chip by gene-atlas-view.js so several genes stay
+   distinguishable; the active one is filled with it. */
+.gene-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--gene-colour, var(--line-strong));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--gene-colour, var(--text));
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.gene-chip.active {
+  background: var(--gene-colour, var(--accent));
+  color: #04121a;
+  font-weight: 650;
+}
+
+.gene-chip-remove {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.gene-chip-remove:hover {
+  opacity: 1;
+}
+
+.gene-switches {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Two options each, unlike the three-way layer tabs. */
+.gene-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.gene-tabs button {
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.gene-rule-note,
+.gene-data-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--warning);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.gene-rule-note[hidden],
+.gene-data-note[hidden] {
+  display: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

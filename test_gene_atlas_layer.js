@@ -86,9 +86,14 @@ function bootAtlas() {
 
   assert.ok(window.DigitalBrainAtlas, 'the atlas should expose its host API');
   // Drain the frames queued during boot so later assertions see a settled state.
+  // A single frame is not enough: render() throttles at 30 ms and lastFrame starts at
+  // performance.now(), so a fixed timestamp lets only the first frame through and every
+  // later drawOneFrame() short-circuits into a no-op. Advance a monotonic clock instead.
+  let clock = 0;
   const drawOneFrame = () => {
     const pending = frames.splice(0, frames.length);
-    pending.forEach((callback) => callback(0));
+    clock += 100;
+    pending.forEach((callback) => callback(clock));
   };
   drawOneFrame();
   return { window, drawOneFrame };

@@ -308,6 +308,65 @@ gene_atlas_web/
 （同样忽略）。因此**直接推 git 得到的站点不含基因数据**，基因图层会显示不可用提示；
 数据需要单独的部署通道（release asset、外部 CDN 或独立数据仓库）。
 
+#### 精选明细基因怎么定（`scripts/rank_gene_specificity.py`）
+
+数据驱动 ∪ 生物学先验，两者各管对方管不了的部分。当前产出 **306 个**（数据驱动 186
++ 先验独有 120），明细约 107 MB。
+
+**为何不用覆盖率（已实测否定）**：
+
+| 指标 | 实测结果 | 结论 |
+| --- | --- | --- |
+| 脑区覆盖率 | 几乎所有基因都是 150-163 区（连 A1BG 都满覆盖） | **常数，无区分度** |
+| 细胞类型覆盖率 | 与特异性 Spearman rho = **−0.675** | **方向相反** |
+
+1,600 万细胞下任何基因在任何区都能找到至少一个表达细胞，所以覆盖率测不出任何东西。
+按它排序会选中 APP(1.2x)/FUS(1.2x)——面板上 31 类几乎一样，等于没信息；而筛掉
+ CX3CR1(300x)、FOXJ1(275x)、TTR(436x) 这些最清晰的标记。
+
+**指标**：特异性 = 峰值类跨区中位 / 全类中位。配额**按 31 类各取 top 6**，而非全局
+top-N：全局排序会让 Microglia 占满名额，Splatter、Mammillary body 一个代表都没有，
+而面板要回答的正是「哪类细胞表达它」。
+
+**先验（`data/gene_atlas_prior_genes.txt`）** 负责数据给不出的：高频查询的疾病基因
+（APP/MAPT/APOE/HTT 排名近 1.0x，纯数据驱动永远选不上，但读者一定会搜）、教科书
+标记、递质通路。改精选范围请编辑先验文件后重跑脚本，不要直接改生成的
+`detail_genes.txt`。
+
+**有效性已验证**：TTR→Choroid plexus、CX3CR1→Microglia、FOXJ1→Ependymal、
+COL1A2→Fibroblast、BCAS1/GPR17→Committed OPC、CLIC6→Choroid plexus、
+CXCL14→CGE interneuron、PVALB→Cerebellar inhibitory（小脑篮状细胞，正确）、
+SLC17A7→齿状回颗粒细胞——均与教科书一致。
+
+#### 两个已知数据局限（如实记录，不用统计手段掩盖）
+
+**1. 极低表达噪声会刷高特异性。** 按纯特异性排序的 top 15 实测全是嗅觉受体
+（OR2F2 12916x、OR10H2、OR8K3）、毛发角蛋白（KRTAP12-4）、精子蛋白（SPACA5B）——
+脑内本不该表达，得分来自中位接近 0 时的除法放大。`MIN_COMBOS = 200` 把它们排除出
+清单（它们的 combos 仅 11-154，正常基因 2000-3400），诊断 CSV 也把合格行排在前面。
+
+**2. `Cerebellar inhibitory` 类存在血管基因污染。** FLT1/CLDN5/CAVIN2/CLEC1A 的峰值类
+都落在它而不是 Vascular。诊断过程：
+
+- 先怀疑是稀疏细胞数噪声 → **实测否定**：FLT1 在细胞数≥20 的组合里中位 3.17，
+  反而高于 <20 的 2.98，所以不是计数噪声，**没加细胞数门槛**。
+- 真因是标注质量：该类出现在 NAC、CA1、A8 等小脑外区域，那些核很可能是 doublet
+  或误分类，携带内皮基因。
+- 试过用 margin（峰值/第二高类）筛掉它们 → **否定**：margin 只看数值、不看谱系关系，
+  会误杀正确标记。BCAS1 margin 仅 **1.08**（第二高是 Oligodendrocyte）却是新生少突
+  胶质的经典标记，COP 与 Oligo 谱系连续共高是正确的；GFAP/AQP4 (1.67-1.69,第二高
+  Ependymal)、ETNPPL (1.80, Bergmann glia) 同理。而污染的 CAVIN2 margin 反而有 2.31。
+
+结论：**如实保留**。明细面板会同时展示 Cerebellar inhibitory 与 Vascular 两类的值，
+读者能自行判断；先验清单已包含真正的血管标记。读面板时应当把 31 类看作
+supercluster 级标注，存在 doublet / ambient RNA 污染，单一类的值不宜孤立解读。
+
+**附带发现**：TH / CHAT / DBH / TPH2 在 31 类粒度下确实没有清晰峰（峰值仅 0.01-0.03），
+因为 supercluster 里根本没有「多巴胺神经元」或「胆碱能神经元」这一类，它们被并入
+Midbrain-derived inhibitory 或 Splatter。它们仍在清单里（用户会搜，且「任何类都不
+富集」本身是诚实信息），但生成的清单会把真实特异性注在符号后面，不假装它们是好标记。
+
+
 
 ### 细胞类型过滤器的语义（必须显式定义）
 

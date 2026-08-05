@@ -278,6 +278,31 @@ function testRemovingAnInactiveChipKeepsTheActiveGene() {
   assert.equal(view.activeGene(), 'SNAP25', 'removing another chip does not steal focus');
 }
 
+// Reported bug: on the gene layer with no gene picked yet, clicking a metric or
+// rule tab threw the atlas back to Cell profiles. repaint() was routing "nothing to
+// draw" through the atlas's teardown call (clearGeneValues -> selectDataLayer
+// "cells"), conflating an empty overlay with leaving the layer. Configuring the
+// layer you just entered must not eject you from it.
+function testConfiguringTheLayerWithNoGeneKeepsIt() {
+  const { document, atlas, view } = boot();
+  assert.equal(view.activeGene(), null, 'this test is about the no-gene state');
+
+  document.querySelector('#geneMetricTabs [data-metric="detection"]').click();
+  let last = atlas.last();
+  assert.equal(last.kind, 'apply',
+    'switching metric must repaint the gene layer, not tear it down');
+  assert.equal(last.metric, 'detection');
+  assert.equal(Object.keys(last.values).length, 0,
+    'with no gene selected the overlay is empty rather than absent');
+
+  document.querySelector('#geneRuleTabs [data-rule="donor_balanced"]').click();
+  last = atlas.last();
+  assert.equal(last.kind, 'apply', 'same for the aggregation rule');
+
+  view.resetCellTypes();
+  assert.equal(atlas.last().kind, 'apply', 'and for the cell-class filter');
+}
+
 function testRemovingTheLastChipLeavesTheGeneLayer() {
   const { document, atlas, view } = boot();
   view.addGene('GFAP');
@@ -650,6 +675,7 @@ async function main() {
     ['testEachChipCarriesItsOwnColour', testEachChipCarriesItsOwnColour],
     ['testRemovingTheActiveChipPromotesANeighbour', testRemovingTheActiveChipPromotesANeighbour],
     ['testRemovingAnInactiveChipKeepsTheActiveGene', testRemovingAnInactiveChipKeepsTheActiveGene],
+    ['testConfiguringTheLayerWithNoGeneKeepsIt', testConfiguringTheLayerWithNoGeneKeepsIt],
     ['testRemovingTheLastChipLeavesTheGeneLayer', testRemovingTheLastChipLeavesTheGeneLayer],
     ['testMetricSwitchRepaintsWithDetectionValues', testMetricSwitchRepaintsWithDetectionValues],
     ['testRuleSwitchRepaintsWithTheOtherAggregation', testRuleSwitchRepaintsWithTheOtherAggregation],

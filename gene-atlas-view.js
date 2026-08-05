@@ -75,19 +75,24 @@
             return data.regionValues(state.active, { cellTypes: state.filter || [] });
         }
 
+        // Painting and tearing the layer down are different intents, and only the
+        // second one belongs to the atlas's clearGeneValues() -- that call also drops
+        // back to the cells layer and hands the scope filters back. Routing "no gene
+        // selected" through it meant a metric or rule click ejected the user from the
+        // layer they had just entered. With no gene the overlay is simply empty, which
+        // is a legitimate state of the gene layer.
         function repaint() {
-            if (!atlas) return;
-            if (!state.active) {
-                if (typeof atlas.clearGeneValues === "function") atlas.clearGeneValues();
-                return;
-            }
-            if (typeof atlas.applyGeneValues === "function") {
-                atlas.applyGeneValues({
-                    values: currentValues(),
-                    metric: data.metric(),
-                    symbol: state.active,
-                });
-            }
+            if (!atlas || typeof atlas.applyGeneValues !== "function") return;
+            atlas.applyGeneValues({
+                values: state.active ? currentValues() : {},
+                metric: data.metric(),
+                symbol: state.active,
+            });
+        }
+
+        // Explicitly giving up the last gene is the one action that means "leave".
+        function teardown() {
+            if (atlas && typeof atlas.clearGeneValues === "function") atlas.clearGeneValues();
         }
 
         // What the atlas needs to fill its region detail panel for the active gene.
@@ -361,7 +366,11 @@
                 state.active = state.genes[Math.min(index, state.genes.length - 1)] || null;
             }
             render();
-            repaint();
+            if (state.active) {
+                repaint();
+            } else {
+                teardown();
+            }
         }
 
         // An explicit list, possibly empty. Passing every known class collapses to

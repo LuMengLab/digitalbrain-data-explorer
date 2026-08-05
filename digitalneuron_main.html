@@ -235,6 +235,16 @@
                     <span class="header-kicker">Interactive 3D Atlas</span>
                 </div>
                 <div class="atlas-embed-meta">
+                    <!-- Layer switch lives in this header row, not the settings drawer: it is
+                         the atlas's primary control, and burying it needed a guided tour to
+                         make it discoverable at all. The atlas binds it by id, so only one
+                         copy may exist. -->
+                    <div class="layer-tabs atlas-embed-layer-tabs" id="dataLayerTabs" role="group" aria-label="Atlas data layer">
+                        <button type="button" data-layer="cells" class="active">Cell profiles</button>
+                        <button type="button" data-layer="functional">Functional</button>
+                        <button type="button" data-layer="structural">Structural</button>
+                        <button type="button" data-layer="genes">Gene expression</button>
+                    </div>
                     <div class="dataset-status" id="datasetStatus" role="status">
                         <span class="status-dot"></span>
                         <span>Whole-brain cells + Allen 3D anatomy</span>
@@ -281,15 +291,6 @@
             <div class="atlas-embed-stage">
                 <aside class="control-panel" id="atlasControlPanel" aria-label="Visualization controls">
                     <button type="button" class="atlas-panel-close" id="atlasSettingsClose" aria-label="Close settings">×</button>
-                    <section class="control-section">
-                        <div class="section-heading"><span>Atlas layer</span></div>
-                        <div class="layer-tabs" id="dataLayerTabs" role="group" aria-label="Atlas data layer">
-                            <button type="button" data-layer="cells" class="active">Cell profiles</button>
-                            <button type="button" data-layer="functional">Functional</button>
-                            <button type="button" data-layer="structural">Structural</button>
-                            <button type="button" data-layer="genes">Gene expression</button>
-                        </div>
-                    </section>
                     <section class="control-section" id="abundanceSection">
                         <div class="section-heading"><span>Cell class</span><button class="text-button" id="resetFilters" type="button">Reset</button></div>
                         <div class="cell-type-list" id="cellTypeList"></div>

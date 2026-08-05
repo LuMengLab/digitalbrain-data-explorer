@@ -63,11 +63,6 @@ function initializeAtlasControls() {
     function setOpen(open) {
         section.classList.toggle('show-settings', open);
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-        if (open) {
-            maybeStartTour();
-        } else if (tourActive) {
-            endTour(true);
-        }
     }
 
     toggle.addEventListener('click', () => {
@@ -89,11 +84,14 @@ function initializeAtlasControls() {
         }
     });
 
-    // One-time guided tour of the Atlas layer switch. It highlights each layer
-    // button in turn and is triggered the first time the settings drawer opens;
-    // a subtle pulse on the toggle invites that first open. State is remembered
-    // in localStorage so it never repeats.
-    const TOUR_KEY = 'digitalbrain.atlasLayerTourSeen';
+    // One-time guided tour of the Atlas layer switch. The switch itself sits in
+    // the section header, so the tour no longer has to coax anyone into opening
+    // the settings drawer; it runs the first time the atlas actually scrolls into
+    // view. Firing on page load instead would explain buttons that are still far
+    // below the fold. State is remembered in localStorage so it never repeats.
+    // The key is versioned: the tour moved and gained a fourth step, so readers
+    // who saw the old drawer-anchored version should see this one once.
+    const TOUR_KEY = 'digitalbrain.atlasLayerTourSeen.v2';
     const layerTabs = document.getElementById('dataLayerTabs');
     const tourSteps = layerTabs
         ? [
@@ -112,9 +110,14 @@ function initializeAtlasControls() {
                 title: 'Structural connectivity',
                 body: 'Switch to structural links (SC) between regions, thresholded by within-matrix percentile.',
             },
+            {
+                button: layerTabs.querySelector('[data-layer="genes"]'),
+                title: 'Gene expression',
+                body: 'Colour the brain by one gene\u2019s mean expression or detection rate across regions. Search a gene, then pick a metric and an aggregation rule.',
+            },
         ].filter((step) => step.button)
         : [];
-    const tourEnabled = tourSteps.length === 3;
+    const tourEnabled = tourSteps.length === 4;
 
     let stepIndex = 0;
     let pop = null;
@@ -216,12 +219,7 @@ function initializeAtlasControls() {
         if (!tourEnabled || tourActive || tourSeen()) {
             return;
         }
-        // The open click may have been undone before this fires.
-        if (!section.classList.contains('show-settings')) {
-            return;
-        }
         tourActive = true;
-        toggle.classList.remove('atlas-settings-pulse');
         if (!pop) {
             buildPop();
         }
@@ -246,21 +244,32 @@ function initializeAtlasControls() {
         }
         if (persist) {
             markTourSeen();
-            toggle.classList.remove('atlas-settings-pulse');
         }
     }
 
-    function maybeStartTour() {
+    // Wait for the atlas to be on screen before explaining its controls. Without
+    // IntersectionObserver we would have to guess; every browser this ships to has
+    // it, so the fallback only covers test environments and is deliberately blunt.
+    function watchForFirstView() {
         if (!tourEnabled || tourSeen()) {
             return;
         }
-        // Start after the drawer's open animation so the target is laid out.
-        window.setTimeout(startTour, 320);
+        if (typeof window.IntersectionObserver !== 'function') {
+            window.setTimeout(startTour, 120);
+            return;
+        }
+        const observer = new window.IntersectionObserver((entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) {
+                return;
+            }
+            observer.unobserve(section);
+            // Let the layout settle so the popover anchors to a measured button.
+            window.setTimeout(startTour, 120);
+        }, { threshold: 0.25 });
+        observer.observe(section);
     }
 
-    if (tourEnabled && !tourSeen()) {
-        toggle.classList.add('atlas-settings-pulse');
-    }
+    watchForFirstView();
 }
 
 // Collapsible cell-type lists inside the embedded atlas. The atlas re-renders
@@ -298,7 +307,15 @@ function initializeAtlasListCollapse() {
     }
 
     function applyList(list, toggle) {
-        list.classList.add('atlas-collapsible');
+        // Guarded like every other write below: this observer watches #atlasSection for
+        // class changes and this function runs inside it, so an unconditional write
+        // re-triggers the observer even when the value is unchanged -- setting an
+        // attribute to its current value still queues a mutation record. That fed a
+        // schedule -> rAF -> applyAll -> schedule loop every frame for the life of
+        // the page.
+        if (!list.classList.contains('atlas-collapsible')) {
+            list.classList.add('atlas-collapsible');
+        }
         const rows = Array.from(list.children);
         if (rows.length <= VISIBLE) {
             if (!toggle.hidden) toggle.hidden = true;
@@ -452,6 +469,7 @@ function initializeApp() {
     initializeEventListeners();
     initializeAtlasControls();
     initializeAtlasListCollapse();
+    initializeStatusCapsuleMarquee();
     initializeViewSwitch();
     initializeGeneAtlas();
     
@@ -459,6 +477,134 @@ function initializeApp() {
     updateView('', '', '');
     
     console.log('DigitalNeuron Explorer initialized successfully');
+}
+
+// Status capsule in the atlas header row. The atlas rewrites its contents with
+// innerHTML on every scope change, and in the cell-profiles layer the label grows
+// with the selection ("Linked · <collection> · <dataset> · <donor>"). Left alone it
+// widened the row until Atlas settings wrapped onto a second line. CSS caps the
+// capsule; this decides whether what is left is worth scrolling and, if it is, wraps
+// the text in a track for the transform animation to move. Pure CSS cannot decide it:
+// no selector knows whether an element overflows.
+function initializeStatusCapsuleMarquee() {
+    const capsule = document.getElementById('datasetStatus');
+    if (!capsule) {
+        return;
+    }
+
+    // Constant speed while travelling, so a longer label scrolls for longer rather
+    // than faster. Each travel leg is 38% of the cycle (the rest is the pauses written
+    // into the keyframes), hence the division. The bounds stop a few pixels of overflow
+    // from twitching and a very long one from crawling.
+    const PIXELS_PER_SECOND = 45;
+    const TRAVEL_FRACTION = 0.38;
+    const MIN_CYCLE = 5;
+    const MAX_CYCLE = 20;
+    // Below this the window cannot be read even while scrolling, so the label is
+    // dropped and its text moves to the capsule's tooltip. Dropping it can only make
+    // the header row narrower, which is why it is safe: widening the label to fit the
+    // text was tried and it brought the row wrapping back.
+    const READABLE_WINDOW = 56;
+
+    const stillness = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    function labelOf(node) {
+        return Array.from(node.children).find(
+            (child) => child.tagName === 'SPAN' && !child.classList.contains('status-dot')
+        );
+    }
+
+    // Every write below is conditional. sync() runs again on its own DOM edits (the
+    // observer watches the node it edits) and dozens of times during a resize drag,
+    // and re-adding is-marquee restarts the CSS animation -- so an unguarded write
+    // would either loop forever or hold the text at the start of its travel.
+    function setVar(node, name, value) {
+        if (node.style.getPropertyValue(name) !== value) {
+            node.style.setProperty(name, value);
+        }
+    }
+
+    function setClass(node, name, on) {
+        if (node.classList.contains(name) !== on) {
+            node.classList.toggle(name, on);
+        }
+    }
+
+    function setTitle(node, value) {
+        if (value) {
+            if (node.title !== value) {
+                node.title = value;
+            }
+        } else if (node.hasAttribute('title')) {
+            node.removeAttribute('title');
+        }
+    }
+
+    function sync() {
+        const label = labelOf(capsule);
+        if (!label) {
+            return;
+        }
+        const track = label.querySelector('.marquee-track');
+        const text = label.textContent.trim();
+
+        // A hidden label measures zero, so it has to come back before measuring.
+        setClass(label, 'is-too-narrow', false);
+        const room = label.clientWidth;
+        // With a track in place, measure the track's own box: a transformed child
+        // counts towards its parent's scrollable overflow, so label.scrollWidth would
+        // drift with the animation, while offsetWidth is the untransformed width.
+        const hidden = (track ? track.offsetWidth : label.scrollWidth) - room;
+
+        const cramped = hidden > 1 && room < READABLE_WINDOW;
+        const scrolling = hidden > 1 && !cramped && !stillness.matches;
+
+        setClass(label, 'is-too-narrow', cramped);
+        setTitle(capsule, cramped ? text : '');
+        // Scrolling or merely truncated, the full text stays reachable on hover.
+        setTitle(label, hidden > 1 && !cramped ? text : '');
+
+        if (!scrolling) {
+            if (track) {
+                // Back to a plain text node so the CSS ellipsis has something to cut;
+                // it would replace an inline-block track wholesale instead.
+                label.textContent = text;
+            }
+            return;
+        }
+
+        const moving = track || label.appendChild(document.createElement('span'));
+        if (!track) {
+            moving.className = 'marquee-track';
+            moving.textContent = text;
+            // Drop the original text node, which is still sitting next to the track.
+            while (moving.previousSibling) {
+                label.removeChild(moving.previousSibling);
+            }
+        } else if (moving.textContent !== text) {
+            moving.textContent = text;
+        }
+
+        const cycle = Math.min(
+            MAX_CYCLE,
+            Math.max(MIN_CYCLE, hidden / PIXELS_PER_SECOND / TRAVEL_FRACTION)
+        );
+        setVar(moving, '--marquee-shift', `${-hidden}px`);
+        setVar(moving, '--marquee-duration', `${cycle.toFixed(1)}s`);
+        setClass(moving, 'is-marquee', true);
+    }
+
+    // childList catches both the atlas's innerHTML rewrites and the track going in or
+    // out; characterData covers in-place text edits. Re-measure on resize too, since
+    // the cap is viewport-relative, and when the motion preference changes.
+    new MutationObserver(sync).observe(capsule, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+    });
+    window.addEventListener('resize', sync);
+    stillness.addEventListener('change', sync);
+    sync();
 }
 
 // Wires the gene search row to the atlas. The index fetch is fire-and-forget: a

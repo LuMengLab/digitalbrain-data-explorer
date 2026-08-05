@@ -17,6 +17,7 @@ def release_file_map() -> dict[str, str]:
         "atlas-bridge.js": "atlas-bridge.js",
         "digitalneuron_data.js": "digitalneuron_data.js",
         "gene-atlas-data.js": "gene-atlas-data.js",
+        "gene-compare-view.js": "gene-compare-view.js",
         "gene-atlas-view.js": "gene-atlas-view.js",
     }
 
@@ -52,6 +53,10 @@ RELEASE_ATLAS_PREFIX = "atlas/"
 DEV_GENE_DIR = "gene_atlas_web"
 RELEASE_GENE_DIR = "gene-data"
 GENE_BASE_ATTRIBUTE = "data-gene-atlas-base"
+# Search dropdown metadata, one columnar index for every gene. Same name in the dev
+# tree and in the bundle, because the frontend derives the path from the gene base
+# attribute.
+SEARCH_INDEX_FILE = "search-index.json"
 
 
 def copy_gene_payload(source_dir: Path, output_dir: Path) -> int:
@@ -60,6 +65,11 @@ def copy_gene_payload(source_dir: Path, output_dir: Path) -> int:
     The export is optional: a build without it still succeeds and the page shows
     the "not available in this build" note the frontend already handles. Failing
     here instead would block every release that has not run the 3-hour export.
+
+    search-index.json is optional on its own: it is produced by a separate, one-second
+    script, and a bundle without it still searches -- by symbol prefix only, without
+    names or Ensembl ids. Silently dropping it, however, would be invisible in the UI,
+    so it is copied whenever it exists.
     """
     payload = source_dir / DEV_GENE_DIR
     index_file = payload / "index.json"
@@ -78,6 +88,11 @@ def copy_gene_payload(source_dir: Path, output_dir: Path) -> int:
         for gene_file in sorted(genes_dir.glob("*.json")):
             shutil.copy2(gene_file, genes_out / gene_file.name)
             copied += 1
+
+    search_index = payload / SEARCH_INDEX_FILE
+    if search_index.is_file():
+        shutil.copy2(search_index, destination / SEARCH_INDEX_FILE)
+        copied += 1
     return copied
 
 

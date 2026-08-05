@@ -44,6 +44,7 @@ def test_build_release_dir_creates_expected_pages_bundle():
         write_file(source_dir / "digitalneuron_data-0.js", "legacy")
         write_file(source_dir / "test_smoke.js", "test")
         write_file(source_dir / "gene-atlas-data.js", "console.log('gene data')")
+        write_file(source_dir / "gene-compare-view.js", "console.log('gene compare')")
         write_file(source_dir / "gene-atlas-view.js", "console.log('gene view')")
 
         atlas_dir = source_dir / "interactive_brain_atlas"
@@ -75,6 +76,7 @@ def test_build_release_dir_creates_expected_pages_bundle():
         assert not (output_dir / "digitalneuron_data-0.js").exists()
         assert not (output_dir / "test_smoke.js").exists()
         assert (output_dir / "gene-atlas-data.js").exists()
+        assert (output_dir / "gene-compare-view.js").exists()
         assert (output_dir / "gene-atlas-view.js").exists()
 
 
@@ -96,6 +98,7 @@ def _minimal_source(source_dir: Path) -> None:
         "atlas-bridge.js",
         "digitalneuron_data.js",
         "gene-atlas-data.js",
+        "gene-compare-view.js",
         "gene-atlas-view.js",
     ):
         write_file(source_dir / name, "x")
@@ -139,6 +142,51 @@ def test_gene_atlas_payload_tree_is_copied_wholesale():
         assert (released / "genes" / "SNAP25.json").exists()
 
 
+def test_the_search_index_travels_with_the_gene_payload():
+    """搜索索引是另一个脚本的产物，漏拷不会报错：发布版的下拉框只是静默地退回
+    只能按符号前缀搜的列表。
+    """
+    module = load_module()
+
+    with TemporaryDirectory() as tmp_dir:
+        source_dir = Path(tmp_dir) / "web"
+        output_dir = Path(tmp_dir) / "pages"
+        _minimal_source(source_dir)
+
+        payload = source_dir / "gene_atlas_web"
+        (payload / "genes").mkdir(parents=True)
+        write_file(payload / "index.json", '{"genes":{"GFAP":"genes/GFAP.json"}}')
+        write_file(payload / "genes" / "GFAP.json", '{"symbol":"GFAP"}')
+        write_file(payload / module.SEARCH_INDEX_FILE, '{"version":1,"symbols":["GFAP"]}')
+
+        module.build_release_dir(source_dir, output_dir)
+
+        released = output_dir / module.RELEASE_GENE_DIR
+        assert (released / module.SEARCH_INDEX_FILE).exists()
+        # 与开发树同名：前端从 gene base 属性推导路径，改名会静默 404。
+        assert (released / module.SEARCH_INDEX_FILE).read_text(encoding="utf-8").startswith("{")
+
+
+def test_a_payload_without_a_search_index_still_releases():
+    """索引未生成时发布仍须成功：前端对缺索引自带降级。"""
+    module = load_module()
+
+    with TemporaryDirectory() as tmp_dir:
+        source_dir = Path(tmp_dir) / "web"
+        output_dir = Path(tmp_dir) / "pages"
+        _minimal_source(source_dir)
+
+        payload = source_dir / "gene_atlas_web"
+        (payload / "genes").mkdir(parents=True)
+        write_file(payload / "index.json", '{"genes":{}}')
+
+        module.build_release_dir(source_dir, output_dir)
+
+        released = output_dir / module.RELEASE_GENE_DIR
+        assert (released / "index.json").exists()
+        assert not (released / module.SEARCH_INDEX_FILE).exists()
+
+
 def test_index_html_points_at_the_released_gene_directory():
     module = load_module()
 
@@ -178,6 +226,7 @@ def test_release_file_map_uses_index_html():
     assert "digitalneuron_data.js" in mapping
     assert mapping["atlas-bridge.js"] == "atlas-bridge.js"
     assert mapping["gene-atlas-data.js"] == "gene-atlas-data.js"
+    assert mapping["gene-compare-view.js"] == "gene-compare-view.js"
     assert mapping["gene-atlas-view.js"] == "gene-atlas-view.js"
     assert "atlas_celltype_map.js" not in mapping
     assert "test_smoke.js" not in mapping
@@ -189,6 +238,12 @@ def test_release_file_map_uses_index_html():
 def main():
     test_build_release_dir_creates_expected_pages_bundle()
     print("PASS test_build_release_dir_creates_expected_pages_bundle")
+    test_gene_atlas_payload_tree_is_copied_wholesale()
+    print("PASS test_gene_atlas_payload_tree_is_copied_wholesale")
+    test_the_search_index_travels_with_the_gene_payload()
+    print("PASS test_the_search_index_travels_with_the_gene_payload")
+    test_a_payload_without_a_search_index_still_releases()
+    print("PASS test_a_payload_without_a_search_index_still_releases")
     test_release_file_map_uses_index_html()
     print("PASS test_release_file_map_uses_index_html")
 

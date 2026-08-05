@@ -5,11 +5,56 @@
 // is a `brod_count` key in the main dataset, so scope region keys are sent
 // verbatim and the atlas intersects them with its known acronyms.
 //
-// Cell types use the Data Explorer's original taxonomy (no folding). Because the
-// source data only stores marginals (region totals and cell-type totals, not a
-// joint region x cell-type matrix), the composition is scope-level and the atlas
-// labels it as such.
+// Cell types use the Data Explorer's original taxonomy (no folding). The source
+// stores only marginals per donor -- a region total (`brod_count`) and a class
+// total (`cell_type_count`), never the joint matrix -- so the scope-level
+// composition is sent as the fallback, and a per-region composition is derived
+// from the donor mix (see buildRegionComposition).
 (function (global) {
+    function normalizeCounts(counts) {
+        const total = Object.values(counts).reduce((sum, value) => sum + (Number(value) || 0), 0);
+        if (!(total > 0)) return null;
+        const fractions = {};
+        Object.entries(counts).forEach(([key, value]) => {
+            fractions[key] = (Number(value) || 0) / total;
+        });
+        return fractions;
+    }
+
+    // Per-region composition, resolved one level below the scope.
+    //
+    // A donor that sampled exactly one region tells us that region's class profile
+    // outright -- and that is the overwhelming majority of them. So for each region
+    // we mix the profiles of the donors that touched it, weighting each donor by the
+    // cells it contributed *there*. The donor-level assumption (a donor's classes are
+    // spread evenly over the regions it sampled) only bites for the few donors that
+    // span many regions, instead of flattening every region to one scope average.
+    function buildRegionComposition(donors) {
+        const totals = {};
+        (donors || []).forEach((donor) => {
+            const profile = normalizeCounts((donor && donor.cell_type_count) || {});
+            if (!profile) return;
+            Object.entries((donor && donor.brod_count) || {}).forEach(([region, raw]) => {
+                const cells = Number(raw) || 0;
+                if (!(cells > 0)) return;
+                const bucket = totals[region] || (totals[region] = {});
+                Object.entries(profile).forEach(([type, share]) => {
+                    bucket[type] = (bucket[type] || 0) + cells * share;
+                });
+            });
+        });
+
+        const regionComposition = {};
+        let resolved = 0;
+        Object.entries(totals).forEach(([region, bucket]) => {
+            const fractions = normalizeCounts(bucket);
+            if (!fractions) return;
+            regionComposition[region] = fractions;
+            resolved += 1;
+        });
+        return { regionComposition, resolved };
+    }
+
     function buildPayload(scope, selection) {
         const brodCounts = (scope && scope.brodCounts) || {};
         // Identity crosswalk on the Brodmann axis; the atlas keeps only the
@@ -26,6 +71,8 @@
             cellTypes.map((type) => [type, total > 0 ? (Number(cellCounts[type]) || 0) / total : 0]),
         );
 
+        const { regionComposition, resolved } = buildRegionComposition(scope && scope.donors);
+
         return {
             type: "digitalbrain-scope",
             scopeKey: scope ? scope.scopeKey : "global",
@@ -35,6 +82,10 @@
             regionCells,
             cellTypes,
             composition,
+            regionComposition,
+            // Tells the atlas how to label the breakdown it is about to draw, so a
+            // repeated scope average is never presented as a regional measurement.
+            compositionResolution: resolved > 0 ? "donor-mix" : "scope",
             cellStats: { totalCount: total },
             totalCells: scope && scope.metrics ? scope.metrics.cells : undefined,
         };
@@ -58,6 +109,12 @@
         // the user may have unlocked the dataset and donor selects, and leaving the
         // layer must return them to that state, not to the page's initial one.
         let restore = null;
+        // The lock only makes sense while the locked layer is on screen: the
+        // overview view drives its charts from the same selects, so switching away
+        // from the atlas must release them, and switching back re-arms the lock if
+        // the gene layer is still active.
+        let geneLayerActive = false;
+        let atlasViewVisible = true;
 
         function setScopeLocked(locked) {
             if (locked && !restore) {
@@ -84,18 +141,31 @@
             if (controls) controls.classList.toggle("is-scope-locked", locked);
         }
 
+        function applyEffectiveLock() {
+            setScopeLocked(geneLayerActive && atlasViewVisible);
+        }
+
         target.addEventListener("digitalbrain-atlas-layer", (event) => {
             const detail = event && event.detail;
-            setScopeLocked(!!detail && detail.layer === "genes");
+            geneLayerActive = !!detail && detail.layer === "genes";
+            applyEffectiveLock();
         });
+
+        return {
+            setAtlasViewVisible(visible) {
+                atlasViewVisible = !!visible;
+                applyEffectiveLock();
+            },
+        };
     }
 
-    const api = { buildPayload, sync, installScopeGuard };
+    const api = { buildPayload, buildRegionComposition, sync, installScopeGuard };
     global.AtlasBridge = api;
     // The atlas announces its layer as soon as it boots, and this file is loaded
     // before it, so the guard is listening in time for that first announcement.
     if (global.document && typeof global.addEventListener === "function") {
-        installScopeGuard(global.document, global);
+        const guard = installScopeGuard(global.document, global);
+        if (guard) api.setAtlasViewVisible = guard.setAtlasViewVisible;
     }
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

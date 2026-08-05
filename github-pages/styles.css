@@ -460,7 +460,8 @@ body {
     font-size: 9px;
 }
 
-#atlasSection .composition-section .section-heading span {
+#atlasSection .composition-section .section-heading span,
+#atlasSection .gene-region-section .section-heading span {
     font-size: 8px;
 }
 

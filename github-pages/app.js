@@ -284,7 +284,9 @@ function initializeAtlasListCollapse() {
     }
 
     const VISIBLE = 5;
-    const listIds = ['cellTypeList', 'legendKey', 'compositionBars'];
+    // geneCellTypeList is the gene layer's own class list: same 31-row problem as the
+    // composition one, so it gets the same collapse rather than a second mechanism.
+    const listIds = ['cellTypeList', 'geneCellTypeList', 'legendKey', 'compositionBars'];
     const toggles = new Map();
     let scheduled = false;
 
@@ -415,6 +417,11 @@ function initializeViewSwitch() {
         atlasBtn.classList.toggle('is-active', !isOverview);
         overviewBtn.setAttribute('aria-selected', isOverview ? 'true' : 'false');
         atlasBtn.setAttribute('aria-selected', isOverview ? 'false' : 'true');
+        // The gene layer's scope lock only applies while the atlas is on screen;
+        // the overview drives its charts from the same selects.
+        if (window.AtlasBridge && typeof window.AtlasBridge.setAtlasViewVisible === 'function') {
+            window.AtlasBridge.setAtlasViewVisible(!isOverview);
+        }
         // Charts may have been drawn while the overview was hidden (0-sized);
         // refit them once it becomes visible.
         if (isOverview && typeof resizeAllCharts === 'function') {

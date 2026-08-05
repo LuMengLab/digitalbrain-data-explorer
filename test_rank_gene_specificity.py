@@ -185,3 +185,52 @@ def test_peak_falls_back_only_when_a_qualifying_class_exists():
     scored = module.score_genes(rows, min_regions_for_peak=20)
     assert scored["G"].peak_cell_type == "Bergmann glia"
     assert scored["G"].peak_regions == 1
+
+
+def test_cli_rekeying_preserves_every_field():
+    """main() 把缓存主键换回 HGNC 符号时是手工重列字段的，漏掉了 peak_regions，
+    于是诊断表整列写成 0 —— 而它恰好就是用来暴露「峰值类只覆盖 2 个区」的那一列。
+    其他测试直接调 write_ranking，绕过了这段重建，所以查不出来。
+    """
+    module = load_module()
+    original = module.GeneScore(
+        symbol="ENSG00000168329",
+        specificity=12.5,
+        peak_cell_type="Microglia",
+        peak_value=3.0,
+        combos=2310,
+        n_cell_types=31,
+        n_regions=163,
+        peak_regions=42,
+    )
+    renamed = module.rekey(original, "CX3CR1")
+
+    assert renamed.symbol == "CX3CR1"
+    assert renamed.peak_regions == 42, "peak_regions 丢了，诊断表这一列就整列为 0"
+    for field in ("specificity", "peak_cell_type", "peak_value", "combos",
+                  "n_cell_types", "n_regions"):
+        assert getattr(renamed, field) == getattr(original, field), field
+
+
+def test_ranking_csv_puts_eligible_genes_first(tmp_path, fixture_rows):
+    """诊断表按纯特异性排序会让 top 全是噪声：实测到前 15 名全为嗅觉
+    受体(OR2F2/OR10H2/OR8K3)、毛发角蛋白(KRTAP12-4)、精子蛋白(SPACA5B)——
+    脑内本不该表达，得分来自极低表达下的噪声（combos 仅 11-154）。
+    门槛本就会把它们排除出清单，但人工审阅 CSV 时依旧会被带偏。
+    """
+    module, rows = fixture_rows
+    scored = module.score_genes(rows)
+    out = tmp_path / "ranking.csv"
+    module.write_ranking(out, scored, min_combos=5)
+
+    import csv
+
+    records = list(csv.DictReader(out.open(encoding="utf-8")))
+    assert "eligible" in records[0], "the CSV must say which rows passed the threshold"
+    assert "peak_regions" in records[0], "peak_regions is what exposes a 2-region peak"
+    # SPARSE 特异性最高（只一个组合），但不合格，必须排在合格行之后。
+    eligible_flags = [record["eligible"] for record in records]
+    assert eligible_flags == sorted(eligible_flags, reverse=True), (
+        f"eligible rows must come first, got {eligible_flags}"
+    )
+    assert records[-1]["symbol"] == "SPARSE"

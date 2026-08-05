@@ -26,7 +26,7 @@ import csv
 import importlib.util
 import statistics
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -64,7 +64,7 @@ MIN_COMBOS = 200
 PER_TYPE = 6
 
 
-# 一个类至少要在这么多个区有数据，它的跳区中位才值得信。实测教训：TH 的峰值类
+# 一个类至少要在这么多个区有数据，它的跨区中位才值得信。实测教训：TH 的峰值类
 # 算出来是 Bergmann glia，而该类只在 2 个区有数据，最大值落在红核 —— 那是中脑
 # 多巴胺神经元的 ambient RNA 渗到了附近的胶质核里，不是 Bergmann glia 在表达 TH。
 MIN_REGIONS_FOR_PEAK = 20
@@ -136,6 +136,15 @@ def score_genes(
     return scored
 
 
+def rekey(score: GeneScore, symbol: str) -> GeneScore:
+    """把缓存主键（Ensembl）换成 HGNC 符号，其余字段原样保留。
+
+    用 replace 而不是手工重列字段：手工列表漏过 peak_regions，诊断表里那一列
+    因此整列为 0，而它正是用来识别「峰值类只覆盖 2 个区、不可信」的依据。
+    """
+    return replace(score, symbol=symbol)
+
+
 def select_by_cell_type(
     scored: dict[str, GeneScore],
     *,
@@ -173,19 +182,29 @@ def merge_with_prior(selected, prior, known) -> list[str]:
     return sorted(merged)
 
 
-def write_ranking(path, scored: dict[str, GeneScore]) -> None:
+def write_ranking(path, scored: dict[str, GeneScore], *, min_combos: int = MIN_COMBOS) -> None:
+    """诊断表。合格行排在前面：按纯特异性排序时 top 15 实测全是嗅觉受体、
+    毛发角蛋白、精子蛋白这类脑内不该表达的基因——它们本就过不了门槛，但会
+    把人工审阅带偏。
+    """
     with Path(path).open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["symbol", "specificity", "peak_cell_type", "peak_value",
-             "combos", "n_cell_types", "n_regions"]
+            ["symbol", "eligible", "specificity", "peak_cell_type", "peak_value",
+             "peak_regions", "combos", "n_cell_types", "n_regions"]
         )
-        for score in sorted(scored.values(), key=lambda s: -s.specificity):
+        ordered = sorted(
+            scored.values(),
+            key=lambda s: (0 if s.combos >= min_combos else 1, -s.specificity),
+        )
+        for score in ordered:
             writer.writerow([
                 score.symbol,
+                "yes" if score.combos >= min_combos else "no",
                 f"{score.specificity:.3f}",
                 score.peak_cell_type,
                 f"{score.peak_value:.4f}",
+                score.peak_regions,
                 score.combos,
                 score.n_cell_types,
                 score.n_regions,
@@ -264,19 +283,11 @@ def main(argv=None) -> int:
         # merge() 以缓存主键分组，换回 HGNC 符号后再入总表。
         for key, score in batch_scores.items():
             symbol = key_to_symbol.get(key, key)
-            scored[symbol] = GeneScore(
-                symbol=symbol,
-                specificity=score.specificity,
-                peak_cell_type=score.peak_cell_type,
-                peak_value=score.peak_value,
-                combos=score.combos,
-                n_cell_types=score.n_cell_types,
-                n_regions=score.n_regions,
-            )
+            scored[symbol] = rekey(score, symbol)
         print(f"[{i}/{len(batches)}] {len(batch)} -> {len(batch_scores)} scored "
               f"(cumulative {len(scored)})", flush=True)
 
-    write_ranking(args.ranking_csv, scored)
+    write_ranking(args.ranking_csv, scored, min_combos=args.min_combos)
     selected = select_by_cell_type(
         scored, per_type=args.per_type, min_combos=args.min_combos
     )

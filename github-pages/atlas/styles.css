@@ -1356,6 +1356,119 @@
   font-size: 7px;
 }
 
+/* Gene expression legend. One row per gene so a viewer can read each gene's own
+   measured range, plus a tick-marked density ramp: the density scale is piecewise, so
+   it cannot be explained by a caption and has to be shown. */
+.legend-gene-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.legend-gene-row {
+  display: grid;
+  grid-template-columns: 9px minmax(34px, auto) 1fr auto;
+  align-items: center;
+  gap: 6px;
+  color: #becfd2;
+  font-size: 7.5px;
+}
+
+.legend-gene-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.legend-gene-symbol {
+  color: #dcecef;
+  font-weight: 600;
+}
+
+/* The abundance marker answers "is this gene high or low overall", which density alone
+   cannot say once every gene is stretched over the same 0-1 density range. Shared
+   0-reference axis, so the markers of two genes are directly comparable. */
+.legend-gene-abundance {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(150, 185, 201, 0.14);
+}
+
+.legend-gene-abundance i {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 7px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: currentcolor;
+}
+
+.legend-gene-range {
+  color: #8fa6ad;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-density {
+  position: relative;
+  margin-top: 9px;
+}
+
+.legend-density-ramp {
+  display: flex;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 2px;
+  background-color: #1b2f35;
+}
+
+/* Density is shown, not described: each step packs its dot lattice tighter than the one
+   before, so the ramp reads sparse on the left and dense on the right. The step widths
+   are equal; only the spacing changes. */
+.legend-density-step {
+  flex: 1 1 0;
+  background-image: radial-gradient(circle at center, rgba(143, 242, 201, 0.95) 0.9px, transparent 1.1px);
+  background-repeat: repeat;
+}
+
+.legend-density-ticks {
+  position: relative;
+  height: 11px;
+  margin-top: 2px;
+}
+
+.legend-density-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: #536a73;
+  font-size: 6.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.legend-density-tick::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 1px;
+  height: 3px;
+  background: rgba(150, 185, 201, 0.4);
+}
+
+/* The slope folds at the breakpoint by design (70% of the density goes to the bottom
+   90% of values), so the fold is marked rather than smoothed over. */
+.legend-density-breakpoint {
+  position: absolute;
+  top: -9px;
+  width: 1px;
+  height: 9px;
+  background: rgba(141, 198, 244, 0.55);
+}
+
 .legend-key {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1481,7 +1594,15 @@
   border-radius: 50%;
 }
 
+.mapping-key i.coarse {
+  width: 7px;
+  height: 7px;
+  border-color: #b6d7cf;
+}
+
 .mapping-key i.proxy {
+  width: 6px;
+  height: 6px;
   border-color: #8dc6f4;
   border-style: dashed;
 }

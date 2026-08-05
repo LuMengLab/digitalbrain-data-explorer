@@ -385,6 +385,22 @@
               </div>
               <div class="legend-key" id="legendKey"></div>
             </div>
+            <div id="legendGenes" hidden>
+              <div class="legend-heading">
+                <span id="legendGenesTitle">Gene expression</span>
+                <strong id="legendGenesMetric">Mean expression</strong>
+              </div>
+              <div class="legend-gene-rows" id="legendGeneRows"></div>
+              <div class="legend-density">
+                <div class="legend-density-ramp" id="legendDensityRamp" aria-label="Point density scale, sparse to dense"></div>
+                <div class="legend-density-ticks" id="legendDensityTicks"></div>
+              </div>
+              <div class="legend-labels">
+                <span>Sparser</span>
+                <span id="legendDensityCaption">Lit point density</span>
+                <span>Denser</span>
+              </div>
+            </div>
             <div id="legendConnectivity" hidden>
               <div class="legend-heading">
                 <span id="connectivityLegendTitle">Functional connectivity</span>
@@ -413,7 +429,8 @@
             </div>
             <div class="mapping-key" id="mappingKey" aria-label="Anatomical mapping confidence">
               <span><i class="exact"></i>Exact anatomy</span>
-              <span><i class="proxy"></i>Broad anatomical proxy</span>
+              <span><i class="coarse"></i>Coarse ontology proxy</span>
+              <span><i class="proxy"></i>Curated gyral proxy</span>
             </div>
           </div>
 
@@ -575,6 +592,7 @@ DGC,Astrocyte,0.14</pre>
     <script src="data/allen_3d_geometry.js"></script>
     <script src="data/connectivity.js"></script>
     <script src="data/atlas_knowledge.js"></script>
+    <script src="gene_point_cloud.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

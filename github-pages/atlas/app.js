@@ -95,10 +95,16 @@
     cellTypes: [...source.cellTypes],
     selectedCellType: ALL_CELL_TYPES,
     dataLayer: "cells",
-    // Gene expression layer: { acronym: value } for the active gene. A region that
-    // is absent from this table has no data and must never be drawn as a zero.
-    geneValues: null,
+    // Gene expression layer. An ordered array of
+    // { symbol, colour, values: { acronym: value }, support: { acronym: cells }, byLabel }
+    // -- ordered because the index fixes each gene's offset angle. A region absent from
+    // a gene's table has no data and must never be drawn as a zero.
+    genes: null,
+    // The density calibration the values are to be read against. Never defaulted: it
+    // ships with the data in index.json, so a missing one is a version mismatch.
+    geneScale: null,
     geneMetric: "mean",
+    geneRule: "cell_weighted",
     geneDetailProvider: null,
     anatomyStyle: "boundaries",
     connectivityPercentile: 96,
@@ -184,6 +190,12 @@
     legendKey: document.getElementById("legendKey"),
     legendTitle: document.getElementById("legendTitle"),
     legendRange: document.getElementById("legendRange"),
+    legendGenes: document.getElementById("legendGenes"),
+    legendGenesMetric: document.getElementById("legendGenesMetric"),
+    legendGeneRows: document.getElementById("legendGeneRows"),
+    legendDensityRamp: document.getElementById("legendDensityRamp"),
+    legendDensityTicks: document.getElementById("legendDensityTicks"),
+    legendDensityCaption: document.getElementById("legendDensityCaption"),
     visibleCount: document.getElementById("visibleCount"),
     cellTypeCount: document.getElementById("cellTypeCount"),
     secondaryCountLabel: document.getElementById("secondaryCountLabel"),
@@ -672,9 +684,14 @@
 
   // Value provider for the marker colour/radius channel. Returns null for "no data"
   // so callers can paint neutral grey and keep the region out of the colour range.
+  //
+  // Region-level and first-gene-only on purpose: this feeds the range readout and the
+  // detail panel, which list one region at a time and so are unaffected by the
+  // label-level merging the point cloud needs.
   function geneValueFor(region) {
-    if (!state.geneValues) return null;
-    const value = state.geneValues[region.acronym];
+    const gene = state.genes && state.genes[0];
+    if (!gene) return null;
+    const value = gene.values[region.acronym];
     return typeof value === "number" && Number.isFinite(value) ? value : null;
   }
 
@@ -708,6 +725,21 @@
     return new Set(region?.geometryMapping?.labelIndices || []);
   }
 
+  // Inverse of regionMappings: which DigitalBrain acronyms claim each Allen label.
+  // Allen has one hippocampus-head label against ten DigitalBrain subregions, so the
+  // point cloud's colouring unit has to be the label, not the region. Built once --
+  // it is a property of the geometry, not of whichever genes are selected.
+  const labelToRegions = (() => {
+    const claims = new Map();
+    Object.entries(anatomy.regionMappings).forEach(([acronym, mapping]) => {
+      (mapping.labelIndices || []).forEach((labelIndex) => {
+        if (!claims.has(labelIndex)) claims.set(labelIndex, []);
+        claims.get(labelIndex).push(acronym);
+      });
+    });
+    return claims;
+  })();
+
   function atlasLabelStyles(boundaryLayer = false) {
     const selectedLabels = labelIndicesForRegion(state.selectedRegion);
     const hoveredLabels = labelIndicesForRegion(state.hoveredRegion);
@@ -729,6 +761,179 @@
       }
       return { color, alpha, selected, hovered };
     });
+  }
+
+  // Point size encodes how trustworthy the region-to-label mapping is, so a viewer can
+  // tell a direct ontology match from a curated gyral stand-in. A label claimed at more
+  // than one confidence takes the most conservative of them (only label 51, HTHma).
+  const GENE_POINT_SIZES = {
+    recoverable_exact_or_union: 1.9,
+    coarse_ontology_proxy: 1.6,
+    curated_gyral_proxy: 1.4,
+  };
+  const GENE_POINT_SIZE_ORDER = [
+    "recoverable_exact_or_union",
+    "coarse_ontology_proxy",
+    "curated_gyral_proxy",
+  ];
+
+  const genePointSizeByLabel = (() => {
+    const sizes = new Float64Array(anatomy.labels.length).fill(GENE_POINT_SIZES.curated_gyral_proxy);
+    const worst = new Int8Array(anatomy.labels.length).fill(-1);
+    Object.values(anatomy.regionMappings).forEach((mapping) => {
+      const rank = GENE_POINT_SIZE_ORDER.indexOf(mapping.status);
+      if (rank < 0) return;
+      (mapping.labelIndices || []).forEach((labelIndex) => {
+        if (rank > worst[labelIndex]) {
+          worst[labelIndex] = rank;
+          sizes[labelIndex] = GENE_POINT_SIZES[mapping.status];
+        }
+      });
+    });
+    return sizes;
+  })();
+
+  // Fisher-Yates over 14k points is far too costly to redo every frame, and the
+  // permutation is a pure function of the group and label anyway.
+  const genePermutations = new Map();
+  function genePermutationFor(groupKey, labelIndex, size) {
+    const key = `${groupKey}:${labelIndex}`;
+    let order = genePermutations.get(key);
+    if (!order || order.length !== size) {
+      // Offset the seed per group so the two groups scatter independently.
+      order = GenePointCloud.permutationFor(
+        groupKey === "boundary" ? labelIndex + anatomy.labels.length : labelIndex,
+        size,
+      );
+      genePermutations.set(key, order);
+    }
+    return order;
+  }
+
+  // Hit testing for the cloud. A per-region 8-12px disc cannot cover a parcel whose
+  // projection spans over 100px, which showed up as "a whole area is lit but only a
+  // small patch in the middle is clickable". So while drawing, each voxel also claims
+  // its 16px screen cell, keeping whichever point is nearest the camera. Lookup is then
+  // O(1) on mousemove, and the extra cost is one array write per point.
+  //
+  // The gene index is stored alongside the label because two genes at different offsets
+  // occupy different pixels: without it a tooltip could not say which gene was meant.
+  const GENE_HIT_CELL = 16;
+  const geneHitGrid = { cols: 0, rows: 0, label: null, gene: null, depth: null, filled: 0 };
+
+  function resetGeneHitGrid() {
+    const cols = Math.max(1, Math.ceil(width / GENE_HIT_CELL));
+    const rows = Math.max(1, Math.ceil(height / GENE_HIT_CELL));
+    if (geneHitGrid.cols !== cols || geneHitGrid.rows !== rows || !geneHitGrid.label) {
+      geneHitGrid.cols = cols;
+      geneHitGrid.rows = rows;
+      geneHitGrid.label = new Int32Array(cols * rows);
+      geneHitGrid.gene = new Int32Array(cols * rows);
+      geneHitGrid.depth = new Float64Array(cols * rows);
+    }
+    geneHitGrid.label.fill(-1);
+    geneHitGrid.gene.fill(-1);
+    geneHitGrid.filled = 0;
+  }
+
+  function claimGeneHitCell(x, y, z, labelIndex, geneIndex) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const cell = Math.floor(y / GENE_HIT_CELL) * geneHitGrid.cols + Math.floor(x / GENE_HIT_CELL);
+    if (geneHitGrid.label[cell] === -1) {
+      geneHitGrid.filled += 1;
+    } else if (z <= geneHitGrid.depth[cell]) {
+      return;
+    }
+    geneHitGrid.label[cell] = labelIndex;
+    geneHitGrid.gene[cell] = geneIndex;
+    geneHitGrid.depth[cell] = z;
+  }
+
+  // Which of the regions sharing this label to name. The cloud drew the support-weighted
+  // merge of all of them, so the honest answer is the one contributing most of that
+  // evidence rather than whichever happens to sort first.
+  function dominantRegionForLabel(labelIndex, gene) {
+    const claimants = labelToRegions.get(labelIndex) || [];
+    let best = null;
+    let bestSupport = -1;
+    for (const acronym of claimants) {
+      const value = gene.values[acronym];
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      const cells = Number(gene.support[acronym]) || 0;
+      if (cells > bestSupport) {
+        bestSupport = cells;
+        best = acronym;
+      }
+    }
+    if (!best) return null;
+    return state.regions.find((region) => region.acronym === best) || null;
+  }
+
+  function geneHitAt(x, y) {
+    if (state.dataLayer !== "genes" || !state.genes || !state.genes.length) return null;
+    if (!geneHitGrid.label || x < 0 || y < 0 || x >= width || y >= height) return null;
+    const cell = Math.floor(y / GENE_HIT_CELL) * geneHitGrid.cols + Math.floor(x / GENE_HIT_CELL);
+    const labelIndex = geneHitGrid.label[cell];
+    if (labelIndex === -1) return null;
+    const geneIndex = geneHitGrid.gene[cell];
+    const gene = state.genes[geneIndex];
+    if (!gene) return null;
+    return {
+      labelIndex,
+      geneIndex,
+      symbol: gene.symbol,
+      region: dominantRegionForLabel(labelIndex, gene),
+    };
+  }
+
+  function drawGenePointGroups(pointGroups, groupKey) {
+    const genes = state.genes;
+    const geneCount = genes.length;
+    ctx.save();
+    for (let labelIndex = 0; labelIndex < pointGroups.length; labelIndex += 1) {
+      const points = pointGroups[labelIndex];
+      if (!points.length) continue;
+      const order = genePermutationFor(groupKey, labelIndex, points.length);
+      const baseSize = genePointSizeByLabel[labelIndex];
+      for (let geneIndex = 0; geneIndex < geneCount; geneIndex += 1) {
+        const gene = genes[geneIndex];
+        if (!gene.byLabel.hasValue[labelIndex]) continue;
+        const lit = GenePointCloud.litIndices(
+          order, geneIndex, geneCount, gene.byLabel.values[labelIndex], state.geneScale,
+        );
+        if (!lit.length) continue;
+        // Offset direction fans the genes apart; the radius rides the perspective so it
+        // stays one physical quantity rather than one screen quantity.
+        const angle = (2 * Math.PI * geneIndex) / geneCount;
+        const offsetX = Math.cos(angle) * GENE_OFFSET_RADIUS;
+        const offsetY = Math.sin(angle) * GENE_OFFSET_RADIUS;
+        ctx.fillStyle = gene.colour;
+        ctx.globalAlpha = 0.85;
+        for (const pointIndex of lit) {
+          const projected = project(points[pointIndex]);
+          const size = Math.max(0.9, baseSize * projected.perspective);
+          // Deterministic sub-pixel jitter breaks up the stripes the voxel lattice
+          // would otherwise print; keyed on the point so it never shimmers.
+          const jitter = geneJitter(labelIndex, pointIndex, geneIndex);
+          const screenX = projected.x + (offsetX + jitter.x) * projected.perspective;
+          const screenY = projected.y + (offsetY + jitter.y) * projected.perspective;
+          ctx.fillRect(screenX - size / 2, screenY - size / 2, size, size);
+          claimGeneHitCell(screenX, screenY, projected.z, labelIndex, geneIndex);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  const GENE_OFFSET_RADIUS = 2;
+
+  function geneJitter(labelIndex, pointIndex, geneIndex) {
+    const seed = (labelIndex * 92837111) ^ (pointIndex * 689287499) ^ (geneIndex * 283923481);
+    const mixed = Math.imul(seed ^ (seed >>> 15), 2246822519) >>> 0;
+    return {
+      x: ((mixed & 0xffff) / 0xffff - 0.5),
+      y: (((mixed >>> 16) & 0xffff) / 0xffff - 0.5),
+    };
   }
 
   function drawAtlasPointGroups(pointGroups, boundaryLayer = false) {
@@ -869,8 +1074,22 @@
   }
 
   function drawAtlasAnatomy() {
-    drawAtlasPointGroups(atlasOuterPointGroups);
-    if (state.showContours) drawAtlasPointGroups(atlasBoundaryPointGroups, true);
+    const geneMode = state.dataLayer === "genes" && Boolean(state.genes && state.genes.length);
+    if (geneMode) {
+      // Both groups, unconditionally. The boundary group holds 56% of the voxels and is
+      // the only substrate for 26 of the 90 claimed labels, so in the genes layer it is
+      // data rather than contour decoration -- gating it on state.showContours would
+      // make those genes vanish silently.
+      resetGeneHitGrid();
+      drawGenePointGroups(atlasOuterPointGroups, "outer");
+      drawGenePointGroups(atlasBoundaryPointGroups, "boundary");
+    } else {
+      // Outside the genes layer the cloud is anatomy again and hit testing goes back to
+      // the per-region discs, so a stale grid must not answer for it.
+      if (geneHitGrid.filled) resetGeneHitGrid();
+      drawAtlasPointGroups(atlasOuterPointGroups);
+      if (state.showContours) drawAtlasPointGroups(atlasBoundaryPointGroups, true);
+    }
     if (state.showContours && state.anatomyStyle === "boundaries") {
       drawAtlasParcelEnvelopes();
     }
@@ -1305,6 +1524,7 @@
         state.geneMetric === "detection"
           ? "0–100%"
           : `${min.toFixed(2)}–${max.toFixed(2)}`;
+      renderGeneLegend();
     } else if (!allMode) {
       dom.legendRange.textContent = `${Math.round(min * 100)}–${Math.round(max * 100)}%`;
     }
@@ -1756,6 +1976,12 @@
     dom.abundanceFilterSection.hidden = !cellLayer;
     dom.connectivitySection.hidden = markerLayer;
     dom.legendConnectivity.hidden = markerLayer;
+    // The genes layer needs a legend of its own. legendRange has always carried the
+    // computed range, but it sits inside legendSingle, which syncCellTypeControls() hides
+    // outside the cells layer -- so the range was correct, written, and unseeable. This
+    // belongs here rather than there because it is layer-driven, like legendConnectivity,
+    // and syncCellTypeControls() is only reached on the cells path anyway.
+    dom.legendGenes.hidden = !geneLayer;
     dom.visualKey.hidden = !markerLayer;
     dom.mappingKey.hidden = !markerLayer;
     dom.compositionSection.hidden = !cellLayer;
@@ -1770,7 +1996,7 @@
         : "Drag to rotate anatomy · Scroll to zoom · Click a connectivity node";
     if (geneLayer) {
       const range = getGeneRange();
-      const covered = state.geneValues ? getVisibleRegions().length : 0;
+      const covered = state.genes && state.genes.length ? getVisibleRegions().length : 0;
       dom.datasetStatus.classList.add("observed");
       dom.datasetStatus.innerHTML = `
         <span class="status-dot"></span>
@@ -2315,7 +2541,111 @@
       });
   }
 
+  // Round values worth a tick on the density ramp. mean is an expression level, whereas
+  // detection is a ratio, so they need different landmarks.
+  const GENE_DENSITY_TICKS = {
+    mean: [0.05, 0.1, 0.5, 1, 2],
+    detection: [0.1, 0.25, 0.5, 0.75],
+  };
+  const GENE_DENSITY_STEPS = 6;
+
+  function formatGeneLegendValue(value) {
+    return state.geneMetric === "detection"
+      ? `${Math.round(value * 100)}%`
+      : value.toFixed(2);
+  }
+
+  function renderGeneLegend() {
+    const scale = state.geneScale;
+    if (!scale) return;
+    const genes = state.genes || [];
+    dom.legendGenesMetric.textContent =
+      state.geneMetric === "detection" ? "Detection rate" : "Mean expression";
+    dom.legendDensityCaption.textContent =
+      state.geneRule === "donor_balanced"
+        ? "Lit density · donor-balanced"
+        : "Lit density · cell-weighted";
+
+    dom.legendGeneRows.replaceChildren();
+    genes.forEach((gene) => {
+      const row = document.createElement("div");
+      row.className = "legend-gene-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "legend-gene-swatch";
+      swatch.style.background = gene.colour;
+      row.append(swatch);
+
+      const symbol = document.createElement("span");
+      symbol.className = "legend-gene-symbol";
+      symbol.textContent = gene.symbol;
+      row.append(symbol);
+
+      // Where this gene's top value sits on the shared 0-reference axis. Cross-gene
+      // comparison splits the channels deliberately: pattern by density, magnitude by
+      // this marker and the numbers, so the two never fight over one channel.
+      const abundance = document.createElement("span");
+      abundance.className = "legend-gene-abundance";
+      abundance.style.color = gene.colour;
+      const marker = document.createElement("i");
+      const reach = gene.max === null
+        ? 0
+        : Math.min(100, (gene.max / scale.reference) * 100);
+      marker.style.left = `${reach}%`;
+      abundance.append(marker);
+      abundance.title = gene.max === null
+        ? "no data"
+        : `peak ${formatGeneLegendValue(gene.max)} of ${formatGeneLegendValue(scale.reference)} corpus reference`;
+      row.append(abundance);
+
+      const range = document.createElement("span");
+      range.className = "legend-gene-range";
+      range.textContent = gene.min === null
+        ? "no data"
+        : `${formatGeneLegendValue(gene.min)}–${formatGeneLegendValue(gene.max)}`;
+      row.append(range);
+
+      dom.legendGeneRows.append(row);
+    });
+
+    if (!dom.legendDensityRamp.childElementCount) {
+      for (let step = 0; step < GENE_DENSITY_STEPS; step += 1) {
+        const cell = document.createElement("span");
+        cell.className = "legend-density-step";
+        const spacing = 8 - (step * 5.6) / (GENE_DENSITY_STEPS - 1);
+        cell.style.backgroundSize = `${spacing.toFixed(2)}px ${spacing.toFixed(2)}px`;
+        dom.legendDensityRamp.append(cell);
+      }
+    }
+
+    // Ticks are placed by the very same normalise() the cloud draws with, so the legend
+    // cannot drift from the picture. A piecewise scale has no one-line explanation.
+    dom.legendDensityTicks.replaceChildren();
+    GENE_DENSITY_TICKS[state.geneMetric].forEach((value) => {
+      if (value > scale.reference) return;
+      const tick = document.createElement("span");
+      tick.className = "legend-density-tick";
+      tick.dataset.value = String(value);
+      tick.style.left = `${GenePointCloud.normalise(value, scale) * 100}%`;
+      tick.textContent = formatGeneLegendValue(value);
+      dom.legendDensityTicks.append(tick);
+    });
+    const fold = document.createElement("span");
+    fold.className = "legend-density-breakpoint";
+    fold.style.left = `${GenePointCloud.D_LOW * 100}%`;
+    fold.title = `slope folds at ${formatGeneLegendValue(scale.breakpoint)}`;
+    dom.legendDensityTicks.append(fold);
+  }
+
   function findRegionAt(x, y) {
+    // In the genes layer the whole lit cloud is the target, not a disc around each
+    // region's anchor: a parcel's projection can span over 100px, so the disc left most
+    // of a visibly lit area unclickable. Fall through to the discs when the grid has
+    // nothing there, so the markers stay reachable.
+    if (state.dataLayer === "genes") {
+      const hit = geneHitAt(x, y);
+      if (hit && hit.region) return hit.region;
+    }
     return [...state.regionProjection]
       .sort((a, b) => b.z - a.z)
       .find((point) => Math.hypot(point.x - x, point.y - y) <= point.radius)?.region;
@@ -3020,20 +3350,67 @@
       clearLinkedScope();
     },
 
-    // Gene expression layer. `values` is { acronym: number }; an absent acronym
-    // means "no data" and stays out of both the colour range and the canvas.
+    // Gene expression layer. The host hands over an ordered array of genes, the
+    // aggregation rule and metric they were computed under, and the density
+    // calibration to read them against:
+    //
+    //   { metric, rule, scale: { breakpoint, reference, lowKnots },
+    //     genes: [{ symbol, colour, values: { acronym: n }, support: { acronym: cells } }] }
+    //
+    // The order is load-bearing: it fixes each gene's offset angle. The colour comes
+    // from the host because the chips and the cloud can only have one source of truth.
+    // An acronym absent from a gene's values means "no data" and stays out of both the
+    // colour range and the canvas.
     applyGeneValues(payload) {
-      const values = (payload && payload.values) || {};
-      state.geneValues = values;
-      if (payload && payload.metric) {
+      const scale = payload && payload.scale;
+      // gene_atlas_web/ is gitignored, so index.json is a deployment artefact and a
+      // stale payload against new code is a real scenario. Refuse it loudly: defaulting
+      // to some range would render every density quietly wrong with nothing on screen
+      // to say so.
+      if (
+        !scale
+        || typeof scale.breakpoint !== "number"
+        || typeof scale.reference !== "number"
+        || !Array.isArray(scale.lowKnots)
+        || scale.lowKnots.length !== 13
+      ) {
+        throw new Error(
+          `applyGeneValues needs a densityScale for ${(payload && payload.rule) || "?"}/`
+          + `${(payload && payload.metric) || "?"}`,
+        );
+      }
+      if (payload.metric) {
         state.geneMetric = payload.metric === "detection" ? "detection" : "mean";
       }
+      if (payload.rule) {
+        state.geneRule = payload.rule === "donor_balanced" ? "donor_balanced" : "cell_weighted";
+      }
+      state.geneScale = scale;
+      state.genes = (payload.genes || []).map((gene) => {
+        const values = gene.values || {};
+        const support = gene.support || {};
+        const byLabel = GenePointCloud.aggregateByLabel(
+          { values, support }, labelToRegions, anatomy.labels.length,
+        );
+        // Measured on the merged label values, which is what the cloud draws, so the
+        // legend row and the summary describe the same numbers the viewer is looking at.
+        let min = null;
+        let max = null;
+        byLabel.hasValue.forEach((present, labelIndex) => {
+          if (!present) return;
+          const value = byLabel.values[labelIndex];
+          if (min === null || value < min) min = value;
+          if (max === null || value > max) max = value;
+        });
+        return { symbol: gene.symbol, colour: gene.colour, values, support, byLabel, min, max };
+      });
       selectDataLayer("genes");
       return this.geneSummary();
     },
 
     clearGeneValues() {
-      state.geneValues = null;
+      state.genes = null;
+      state.geneScale = null;
       selectDataLayer("cells");
       return this.geneSummary();
     },
@@ -3064,13 +3441,53 @@
       return {
         layer: state.dataLayer,
         metric: state.geneMetric,
+        rule: state.geneRule,
         regions:
           state.dataLayer === "genes"
             ? getVisibleRegions().map((region) => region.acronym)
             : [],
         min: range.min,
         max: range.max,
+        // One entry per gene, in the order the host gave them. min/max are measured on
+        // the aggregated label values, which is what the cloud actually draws, so a
+        // legend row describes the same numbers the viewer is looking at.
+        genes: (state.genes || []).map((gene) => ({
+          symbol: gene.symbol,
+          colour: gene.colour,
+          min: gene.min,
+          max: gene.max,
+        })),
       };
+    },
+
+    // Which gene and region a screen position belongs to in the cloud. The tooltip and
+    // the click path both go through here, so a host wanting "what am I pointing at"
+    // gets the same answer the atlas acts on.
+    geneHitAt(x, y) {
+      return geneHitAt(x, y);
+    },
+
+    // Read-only view of the hit grid, for the tests and for diagnosing "lit but not
+    // clickable" reports.
+    geneHitReport() {
+      const genesSeen = [];
+      let sample = null;
+      if (geneHitGrid.label) {
+        for (let cell = 0; cell < geneHitGrid.label.length; cell += 1) {
+          if (geneHitGrid.label[cell] === -1) continue;
+          const geneIndex = geneHitGrid.gene[cell];
+          if (!genesSeen.includes(geneIndex)) genesSeen.push(geneIndex);
+          if (!sample) {
+            const column = cell % geneHitGrid.cols;
+            const row = Math.floor(cell / geneHitGrid.cols);
+            sample = {
+              x: column * GENE_HIT_CELL + GENE_HIT_CELL / 2,
+              y: row * GENE_HIT_CELL + GENE_HIT_CELL / 2,
+            };
+          }
+        }
+      }
+      return { filled: geneHitGrid.filled, cell: GENE_HIT_CELL, genesSeen, sample };
     },
 
     // Whether an acronym exists in the catalogue and can be placed in 3D.

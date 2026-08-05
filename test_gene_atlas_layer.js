@@ -720,6 +720,65 @@ function testGeneCloudPointCountGrowsSublinearly() {
     `four saturated genes must cost about sqrt(4) = 2x one, got ${ratio.toFixed(2)}x`);
 }
 
+// A per-region 8-12px disc cannot cover a parcel whose projection spans over 100px, so
+// the whole lit cloud has to be clickable. These exercise the screen grid that makes it
+// so, through the same seam the tooltip and the click handler use.
+function testGeneCloudIsHitTestableAcrossItsWholeExtent() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const acronym = someMappedAcronyms(window, 1)[0];
+  atlas.applyGeneValues(oneGene({ [acronym]: 1.5 }));
+  drawOneFrame();
+
+  const hits = atlas.geneHitReport();
+  assert.ok(hits.filled > 0, 'the cloud must register cells in the hit grid');
+  const sample = hits.sample;
+  const found = atlas.geneHitAt(sample.x, sample.y);
+  assert.ok(found, 'a lit screen position must resolve to a hit');
+  assert.equal(found.geneIndex, 0, 'the single gene must be identified');
+  assert.equal(found.symbol, 'AIF1', 'the hit must name the gene it belongs to');
+  assert.ok(found.region, 'and it must resolve to a region for the detail panel');
+}
+
+function testEachGeneIsIdentifiedAtItsOwnOffset() {
+  // The genes are drawn at different offset angles, so a pixel belongs to exactly one of
+  // them. Without the gene index in the grid a tooltip could not say which.
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 1)[0];
+  atlas.applyGeneValues({
+    metric: 'mean',
+    rule: 'cell_weighted',
+    scale: SCALE,
+    genes: [
+      { symbol: 'AIF1', colour: '#61ddb2', values: { [picked]: 1.5 }, support: { [picked]: 1000 } },
+      { symbol: 'GFAP', colour: '#f0a36a', values: { [picked]: 1.5 }, support: { [picked]: 1000 } },
+    ],
+  });
+  drawOneFrame();
+
+  const seen = new Set(atlas.geneHitReport().genesSeen);
+  assert.deepEqual([...seen].sort(), [0, 1],
+    'both genes must own cells of their own in the grid');
+}
+
+function testTheHitGridIsIgnoredOutsideTheGeneLayer() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const acronym = someMappedAcronyms(window, 1)[0];
+  atlas.applyGeneValues(oneGene({ [acronym]: 1.5 }));
+  drawOneFrame();
+  assert.ok(atlas.geneHitReport().filled > 0, 'this test needs a populated grid first');
+
+  atlas.clearGeneValues();
+  drawOneFrame();
+  assert.equal(atlas.geneHitReport().filled, 0,
+    'leaving the layer must empty the grid so the cells layer keeps its disc path');
+  const sample = { x: 450, y: 300 };
+  assert.equal(atlas.geneHitAt(sample.x, sample.y), null,
+    'and no hit may be reported from a stale grid');
+}
+
 function main() {
   const cases = [
     ['testGeneLayerIsAcceptedByTheLayerWhitelist', testGeneLayerIsAcceptedByTheLayerWhitelist],
@@ -749,6 +808,9 @@ function main() {
     ['testGeneCloudLightsMorePointsForHigherValues', testGeneCloudLightsMorePointsForHigherValues],
     ['testGeneCloudIgnoresTheContourToggle', testGeneCloudIgnoresTheContourToggle],
     ['testGeneCloudPointCountGrowsSublinearly', testGeneCloudPointCountGrowsSublinearly],
+    ['testGeneCloudIsHitTestableAcrossItsWholeExtent', testGeneCloudIsHitTestableAcrossItsWholeExtent],
+    ['testEachGeneIsIdentifiedAtItsOwnOffset', testEachGeneIsIdentifiedAtItsOwnOffset],
+    ['testTheHitGridIsIgnoredOutsideTheGeneLayer', testTheHitGridIsIgnoredOutsideTheGeneLayer],
   ];
   cases.forEach(([name, fn]) => {
     fn();

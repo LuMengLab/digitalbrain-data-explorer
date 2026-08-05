@@ -804,6 +804,82 @@
     return order;
   }
 
+  // Hit testing for the cloud. A per-region 8-12px disc cannot cover a parcel whose
+  // projection spans over 100px, which showed up as "a whole area is lit but only a
+  // small patch in the middle is clickable". So while drawing, each voxel also claims
+  // its 16px screen cell, keeping whichever point is nearest the camera. Lookup is then
+  // O(1) on mousemove, and the extra cost is one array write per point.
+  //
+  // The gene index is stored alongside the label because two genes at different offsets
+  // occupy different pixels: without it a tooltip could not say which gene was meant.
+  const GENE_HIT_CELL = 16;
+  const geneHitGrid = { cols: 0, rows: 0, label: null, gene: null, depth: null, filled: 0 };
+
+  function resetGeneHitGrid() {
+    const cols = Math.max(1, Math.ceil(width / GENE_HIT_CELL));
+    const rows = Math.max(1, Math.ceil(height / GENE_HIT_CELL));
+    if (geneHitGrid.cols !== cols || geneHitGrid.rows !== rows || !geneHitGrid.label) {
+      geneHitGrid.cols = cols;
+      geneHitGrid.rows = rows;
+      geneHitGrid.label = new Int32Array(cols * rows);
+      geneHitGrid.gene = new Int32Array(cols * rows);
+      geneHitGrid.depth = new Float64Array(cols * rows);
+    }
+    geneHitGrid.label.fill(-1);
+    geneHitGrid.gene.fill(-1);
+    geneHitGrid.filled = 0;
+  }
+
+  function claimGeneHitCell(x, y, z, labelIndex, geneIndex) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const cell = Math.floor(y / GENE_HIT_CELL) * geneHitGrid.cols + Math.floor(x / GENE_HIT_CELL);
+    if (geneHitGrid.label[cell] === -1) {
+      geneHitGrid.filled += 1;
+    } else if (z <= geneHitGrid.depth[cell]) {
+      return;
+    }
+    geneHitGrid.label[cell] = labelIndex;
+    geneHitGrid.gene[cell] = geneIndex;
+    geneHitGrid.depth[cell] = z;
+  }
+
+  // Which of the regions sharing this label to name. The cloud drew the support-weighted
+  // merge of all of them, so the honest answer is the one contributing most of that
+  // evidence rather than whichever happens to sort first.
+  function dominantRegionForLabel(labelIndex, gene) {
+    const claimants = labelToRegions.get(labelIndex) || [];
+    let best = null;
+    let bestSupport = -1;
+    for (const acronym of claimants) {
+      const value = gene.values[acronym];
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      const cells = Number(gene.support[acronym]) || 0;
+      if (cells > bestSupport) {
+        bestSupport = cells;
+        best = acronym;
+      }
+    }
+    if (!best) return null;
+    return state.regions.find((region) => region.acronym === best) || null;
+  }
+
+  function geneHitAt(x, y) {
+    if (state.dataLayer !== "genes" || !state.genes || !state.genes.length) return null;
+    if (!geneHitGrid.label || x < 0 || y < 0 || x >= width || y >= height) return null;
+    const cell = Math.floor(y / GENE_HIT_CELL) * geneHitGrid.cols + Math.floor(x / GENE_HIT_CELL);
+    const labelIndex = geneHitGrid.label[cell];
+    if (labelIndex === -1) return null;
+    const geneIndex = geneHitGrid.gene[cell];
+    const gene = state.genes[geneIndex];
+    if (!gene) return null;
+    return {
+      labelIndex,
+      geneIndex,
+      symbol: gene.symbol,
+      region: dominantRegionForLabel(labelIndex, gene),
+    };
+  }
+
   function drawGenePointGroups(pointGroups, groupKey) {
     const genes = state.genes;
     const geneCount = genes.length;
@@ -833,12 +909,10 @@
           // Deterministic sub-pixel jitter breaks up the stripes the voxel lattice
           // would otherwise print; keyed on the point so it never shimmers.
           const jitter = geneJitter(labelIndex, pointIndex, geneIndex);
-          ctx.fillRect(
-            projected.x + (offsetX + jitter.x) * projected.perspective - size / 2,
-            projected.y + (offsetY + jitter.y) * projected.perspective - size / 2,
-            size,
-            size,
-          );
+          const screenX = projected.x + (offsetX + jitter.x) * projected.perspective;
+          const screenY = projected.y + (offsetY + jitter.y) * projected.perspective;
+          ctx.fillRect(screenX - size / 2, screenY - size / 2, size, size);
+          claimGeneHitCell(screenX, screenY, projected.z, labelIndex, geneIndex);
         }
       }
     }
@@ -1000,9 +1074,13 @@
       // the only substrate for 26 of the 90 claimed labels, so in the genes layer it is
       // data rather than contour decoration -- gating it on state.showContours would
       // make those genes vanish silently.
+      resetGeneHitGrid();
       drawGenePointGroups(atlasOuterPointGroups, "outer");
       drawGenePointGroups(atlasBoundaryPointGroups, "boundary");
     } else {
+      // Outside the genes layer the cloud is anatomy again and hit testing goes back to
+      // the per-region discs, so a stale grid must not answer for it.
+      if (geneHitGrid.filled) resetGeneHitGrid();
       drawAtlasPointGroups(atlasOuterPointGroups);
       if (state.showContours) drawAtlasPointGroups(atlasBoundaryPointGroups, true);
     }
@@ -2451,6 +2529,14 @@
   }
 
   function findRegionAt(x, y) {
+    // In the genes layer the whole lit cloud is the target, not a disc around each
+    // region's anchor: a parcel's projection can span over 100px, so the disc left most
+    // of a visibly lit area unclickable. Fall through to the discs when the grid has
+    // nothing there, so the markers stay reachable.
+    if (state.dataLayer === "genes") {
+      const hit = geneHitAt(x, y);
+      if (hit && hit.region) return hit.region;
+    }
     return [...state.regionProjection]
       .sort((a, b) => b.z - a.z)
       .find((point) => Math.hypot(point.x - x, point.y - y) <= point.radius)?.region;
@@ -3263,6 +3349,36 @@
           return { symbol: gene.symbol, colour: gene.colour, min, max };
         }),
       };
+    },
+
+    // Which gene and region a screen position belongs to in the cloud. The tooltip and
+    // the click path both go through here, so a host wanting "what am I pointing at"
+    // gets the same answer the atlas acts on.
+    geneHitAt(x, y) {
+      return geneHitAt(x, y);
+    },
+
+    // Read-only view of the hit grid, for the tests and for diagnosing "lit but not
+    // clickable" reports.
+    geneHitReport() {
+      const genesSeen = [];
+      let sample = null;
+      if (geneHitGrid.label) {
+        for (let cell = 0; cell < geneHitGrid.label.length; cell += 1) {
+          if (geneHitGrid.label[cell] === -1) continue;
+          const geneIndex = geneHitGrid.gene[cell];
+          if (!genesSeen.includes(geneIndex)) genesSeen.push(geneIndex);
+          if (!sample) {
+            const column = cell % geneHitGrid.cols;
+            const row = Math.floor(cell / geneHitGrid.cols);
+            sample = {
+              x: column * GENE_HIT_CELL + GENE_HIT_CELL / 2,
+              y: row * GENE_HIT_CELL + GENE_HIT_CELL / 2,
+            };
+          }
+        }
+      }
+      return { filled: geneHitGrid.filled, cell: GENE_HIT_CELL, genesSeen, sample };
     },
 
     // Whether an acronym exists in the catalogue and can be placed in 3D.

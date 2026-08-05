@@ -279,7 +279,7 @@ gene_atlas_web/
     ├── GFAP.json                 区域级：regions{mean,detection} × 双规则 + support
     │                               ~17 KB，全部 19,296 个蛋白编码基因都有
     ├── GFAP.detail.json           cellType 明细：region×cellType × 双规则
-    │                               ~357 KB，仅 data/gene_atlas_detail_genes.txt 的 93 个
+    │                               实测 ~265 KB，仅 data/gene_atlas_detail_genes.txt 的 517 个
     └── SNAP25.json               无明细的基因只有这一个文件，hasDetail: false
 ```
 
@@ -290,7 +290,7 @@ gene_atlas_web/
 | 全粒度单文件 | 381 KB | **7.2 GB** | 否，破 Pages |
 | 区域级（support 存双份） | 24 KB | 454 MB | 是 |
 | **区域级（support 提顶层）** | **17 KB** | **~320 MB** | **是，当前实现** |
-| + 93 个精选明细 | 357 KB | +33 MB | |
+| + 517 个精选明细 | 265 KB | +134 MB | |
 
 `support`（datasets / donors / cells）是**计数**，与聚合规则无关——双规则下完全相同，
 所以提到文件顶层只存一份，省 31%。
@@ -300,7 +300,7 @@ gene_atlas_web/
 - `index.json` 的 `detailGenes` 让前端在取数**之前**就知道该不该开放细胞类型过滤器
 - 仍然**不需要分块二进制、`DecompressionStream` 或定点量化**
 
-**代价（已接受）**：细胞类型过滤只对 93 个精选基因可用。其余基因的过滤器置灰并说明
+**代价（已接受）**：细胞类型过滤只对 517 个精选基因可用。其余基因的过滤器置灰并说明
 「该基因只有区域级数据，图上显示全部细胞类型合并值」——置灰而不解释会被读成故障。
 
 **发布与部署**：产物由 `scripts/export_gene_atlas_web.py` 生成到 `gene_atlas_web/`
@@ -310,8 +310,8 @@ gene_atlas_web/
 
 #### 精选明细基因怎么定（`scripts/rank_gene_specificity.py`）
 
-数据驱动 ∪ 生物学先验，两者各管对方管不了的部分。当前产出 **306 个**（数据驱动 186
-+ 先验独有 120），明细约 107 MB。
+数据驱动 ∪ 生物学先验，两者各管对方管不了的部分。当前产出 **517 个**（数据驱动 403
++ 先验独有 114），明细约 134 MB。
 
 **为何不用覆盖率（已实测否定）**：
 
@@ -324,9 +324,19 @@ gene_atlas_web/
 按它排序会选中 APP(1.2x)/FUS(1.2x)——面板上 31 类几乎一样，等于没信息；而筛掉
  CX3CR1(300x)、FOXJ1(275x)、TTR(436x) 这些最清晰的标记。
 
-**指标**：特异性 = 峰值类跨区中位 / 全类中位。配额**按 31 类各取 top 6**，而非全局
+**指标**：特异性 = 峰值类跨区中位 / 全类中位。配额**按 31 类各取 top 13**，而非全局
 top-N：全局排序会让 Microglia 占满名额，Splatter、Mammillary body 一个代表都没有，
-而面板要回答的正是「哪类细胞表达它」。
+而面板要回答的正是「哪类细胞表达它」。实测全局 top 306 只覆盖 17/31 类，Cerebellar
+inhibitory 一类独占 60 个名额。
+
+**配额为何是 13**：松紧按「类名基因是否进得来」定。LAMP5 是自己那类（LAMP5-LHX6 and
+Chandelier）的命名基因，14.4x 在类内排第 13，而 top 6 的门槛是 18.4x，正好卡在外面。
+再往下没有可放的档：ASIC2 要放到类内第 297 名（8,221 个基因、2.1 GB）、AKT2 要第 703
+名（14,075 个、3.6 GB），等于取消筛选 —— 这两个走先验特例。
+
+各类门槛差 68 倍（Splatter 第 6 名仅 5.1x = 全库 top 26.9%，Miscellaneous 348.6x =
+top 0.1%），所以「精选基因的分位」没有单一数字：数据驱动这 403 个的特异性中位在全库
+top 3% 附近，下限一直放到约四分之一分位。
 
 **先验（`data/gene_atlas_prior_genes.txt`）** 负责数据给不出的：高频查询的疾病基因
 （APP/MAPT/APOE/HTT 排名近 1.0x，纯数据驱动永远选不上，但读者一定会搜）、教科书
@@ -366,6 +376,16 @@ supercluster 级标注，存在 doublet / ambient RNA 污染，单一类的值�
 Midbrain-derived inhibitory 或 Splatter。它们仍在清单里（用户会搜，且「任何类都不
 富集」本身是诚实信息），但生成的清单会把真实特异性注在符号后面，不假装它们是好标记。
 
+**3. 特异性指标对「泛神经元 / 泛胶质」型基因是盲的。** peak/median 的分母会跟着峰一
+起动：实测 ASIC2 的 specificity 只有 **2.31x**（全库 top 53%，数据驱动要放到类内第
+297 名才收得到），但它的跨类 max/min 是 **109.7x** —— 在多数神经元类都高、在胶质类
+近零，中位被自己抬起来了。ENO2（1.55x vs 10.4x）同型。
+
+结论：这类基因只能靠先验清单进明细集合；判断一个基因平不平、或是不是真的类型限制，
+一律用 `scripts/gene_flatness_probe.py` 算 max/min 与检出率下界，不要看诊断表的
+specificity 列。housekeeping 对照面板（10 个基因、入选判据、判读规则）单独记在
+`docs/gene-atlas-housekeeping-panel.md`。
+
 
 
 ### 细胞类型过滤器的语义（必须显式定义）
@@ -381,7 +401,7 @@ Midbrain-derived inhibitory 或 Splatter。它们仍在清单里（用户会搜�
 该区按**数据缺失**处理（中性灰、不进色标区间），**不得渲染为 0**。
 
 **可用性前提**：重算需要 cellType 明细层，因此过滤器只对 `index.json` 的 `detailGenes`
-列出的 93 个精选基因开放。其余基因勾选框置灰，并显式说明图上是全部细胞类型的合并值。
+列出的 517 个精选基因开放。其余基因勾选框置灰，并显式说明图上是全部细胞类型的合并值。
 
 两处易混的空状态必须区分开：
 

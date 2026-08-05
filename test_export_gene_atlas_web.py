@@ -199,8 +199,10 @@ def test_shipped_detail_gene_list_is_a_usable_subset():
     module = load_module()
     detail = module.read_symbol_list(module.DEFAULT_DETAIL_LIST)
     coding = set(module.protein_coding_symbols())
-    # Small enough to stay well inside the size budget at ~350 KB per gene.
-    assert 40 < len(detail) < 400
+    # 体积守卫：实测明细 ~265 KB/基因，当前 517 个 = 128 MB，与区域级 ~320 MB 合计仍在
+    # Pages 限额内。上限 700 是留给先验清单增补的余地；再往上就该重新算账 —— 例如把
+    # per_type 放宽到能收进 ASIC2 的水平会是 8,221 个基因、2.1 GB。
+    assert 40 < len(detail) < 700
     # Every entry must be a current HGNC approved symbol, otherwise it silently
     # exports nothing and the detail panel is mysteriously unavailable.
     unknown = [symbol for symbol in detail if symbol not in coding]

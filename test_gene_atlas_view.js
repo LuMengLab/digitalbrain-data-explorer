@@ -84,9 +84,22 @@ const FIXTURE_GAD1 = {
   donor_balanced: { regions: { mean: { Pn: 2.5 }, detection: { Pn: 0.7 } } },
 };
 
+const SCALE = {
+  breakpoint: 0.5201,
+  reference: 3.5091,
+  lowKnots: [0, 0.0008, 0.003, 0.0085, 0.0196, 0.0372, 0.0602,
+             0.0889, 0.1253, 0.1729, 0.2382, 0.3379, 0.5201],
+};
+
 const FIXTURE_INDEX = {
   scope: { datasets: 109, donors: 2143, cells: 16352123 },
   cellTypes: ['Astrocyte', 'Microglia', 'Oligodendrocyte'],
+  // Four groups, as the export ships them: the two rules disagree by 21% on the mean
+  // anchor, so the row has to pick the pair matching the current rule and metric.
+  densityScale: {
+    cell_weighted: { mean: SCALE, detection: { ...SCALE, reference: 1 } },
+    donor_balanced: { mean: { ...SCALE, reference: 2.9077 }, detection: { ...SCALE, reference: 1 } },
+  },
   genes: {
     GFAP: 'genes/GFAP.json',
     SNAP25: 'genes/SNAP25.json',
@@ -116,8 +129,22 @@ function stubAtlas() {
   return {
     calls,
     applyGeneValues(payload) {
-      calls.push({ kind: 'apply', values: payload.values, metric: payload.metric });
-      return { layer: 'genes', metric: payload.metric };
+      calls.push({
+        kind: 'apply',
+        metric: payload.metric,
+        rule: payload.rule,
+        scale: payload.scale,
+        genes: payload.genes,
+        // Convenience for the single-gene tests: the first gene in selection order
+        // carries exactly what the old single-gene payload used to. No gene selected
+        // means an empty overlay, which is a legitimate state of the gene layer.
+        values: payload.genes && payload.genes.length ? payload.genes[0].values : {},
+      });
+      return {
+        layer: 'genes',
+        metric: payload.metric,
+        genes: (payload.genes || []).map((gene) => ({ symbol: gene.symbol, colour: gene.colour })),
+      };
     },
     clearGeneValues() {
       calls.push({ kind: 'clear' });
@@ -665,6 +692,67 @@ async function testTheProviderReturnsNoDataForAnUncoveredRegion() {
   assert.equal(snapshot.rows.length, 0);
 }
 
+function testEverySelectedGeneReachesTheAtlasInOrder() {
+  // The cloud draws every selected gene at once, and the array order fixes each
+  // gene's offset angle -- so "in order" is load-bearing, not cosmetic.
+  const { atlas, view } = boot();
+  view.addGene('GFAP');
+  view.addGene('SNAP25');
+  const painted = atlas.last();
+  // Spread into a local array: the payload is built in the vm realm, so a bare
+  // deepEqual on the mapped result trips over the foreign Array prototype.
+  assert.deepEqual([...painted.genes].map((gene) => gene.symbol), ['GFAP', 'SNAP25'],
+    'both genes must go over, in selection order');
+  assert.equal(painted.genes[1].values.EC, 3.1, "the second gene's own values must travel with it");
+}
+
+function testEachGeneCarriesItsChipColour() {
+  // One source of truth for colour: the chips already own it, so the cloud has to be
+  // told rather than deriving its own and drifting apart from the row.
+  const { document, atlas, view } = boot();
+  view.addGene('GFAP');
+  view.addGene('SNAP25');
+  const painted = atlas.last();
+  const chips = [...document.querySelectorAll('#geneChips [data-gene-colour]')];
+  assert.deepEqual([...painted.genes].map((gene) => gene.colour),
+    chips.map((chip) => chip.dataset.geneColour),
+    'the payload colours must be the chip colours');
+}
+
+function testGeneSupportTravelsWithEachGene() {
+  // The atlas merges the several DigitalBrain regions that share one Allen label, and
+  // it can only weight that merge by cell counts if they arrive with the values.
+  //
+  // Numbers, not the { datasets, donors, cells } record the data layer stores: the
+  // aggregation ignores a non-numeric weight, so handing the record over would leave
+  // every label dark and the cloud blank without raising anything.
+  const { atlas, view } = boot();
+  view.addGene('GFAP');
+  const gene = atlas.last().genes[0];
+  assert.ok(gene.support && Object.keys(gene.support).length,
+    'support must not be dropped on the way to the atlas');
+  Object.keys(gene.support).forEach((acronym) => {
+    assert.equal(typeof gene.support[acronym], 'number',
+      `support for ${acronym} must be reduced to a cell count`);
+    assert.ok(gene.support[acronym] > 0, `support for ${acronym} must be a positive cell count`);
+  });
+}
+
+function testThePaintedCalibrationFollowsTheRuleAndMetric() {
+  // Four groups exist because the two rules disagree by 21% on the mean anchor. Sending
+  // the wrong pair would mislabel the range without any visible symptom.
+  const { document, atlas, view } = boot();
+  view.addGene('GFAP');
+  assert.equal(atlas.last().scale.reference, 3.5091, 'cell-weighted/mean is the default');
+
+  document.querySelector('#geneRuleTabs [data-rule="donor_balanced"]').click();
+  assert.equal(atlas.last().scale.reference, 2.9077, 'the calibration must follow the rule');
+
+  document.querySelector('#geneMetricTabs [data-metric="detection"]').click();
+  assert.equal(atlas.last().scale.reference, 1,
+    'detection is a ratio, so its anchor is the natural bound');
+}
+
 async function main() {
   const cases = [
     ['testSearchListsMatchingSymbols', testSearchListsMatchingSymbols],
@@ -676,6 +764,10 @@ async function main() {
     ['testRemovingTheActiveChipPromotesANeighbour', testRemovingTheActiveChipPromotesANeighbour],
     ['testRemovingAnInactiveChipKeepsTheActiveGene', testRemovingAnInactiveChipKeepsTheActiveGene],
     ['testConfiguringTheLayerWithNoGeneKeepsIt', testConfiguringTheLayerWithNoGeneKeepsIt],
+    ['testEverySelectedGeneReachesTheAtlasInOrder', testEverySelectedGeneReachesTheAtlasInOrder],
+    ['testEachGeneCarriesItsChipColour', testEachGeneCarriesItsChipColour],
+    ['testGeneSupportTravelsWithEachGene', testGeneSupportTravelsWithEachGene],
+    ['testThePaintedCalibrationFollowsTheRuleAndMetric', testThePaintedCalibrationFollowsTheRuleAndMetric],
     ['testRemovingTheLastChipLeavesTheGeneLayer', testRemovingTheLastChipLeavesTheGeneLayer],
     ['testMetricSwitchRepaintsWithDetectionValues', testMetricSwitchRepaintsWithDetectionValues],
     ['testRuleSwitchRepaintsWithTheOtherAggregation', testRuleSwitchRepaintsWithTheOtherAggregation],

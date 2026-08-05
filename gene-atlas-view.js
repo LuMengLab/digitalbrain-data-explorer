@@ -75,18 +75,66 @@
             return data.regionValues(state.active, { cellTypes: state.filter || [] });
         }
 
+        // Values for any selected gene, not just the active one: the cloud draws them
+        // all at once. Same short-circuit on an empty class selection.
+        function valuesFor(symbol) {
+            if (state.filter && !state.filter.length) return {};
+            return data.regionValues(symbol, { cellTypes: state.filter || [] });
+        }
+
+        // The cell counts behind each value. They travel with the gene because the
+        // atlas needs them to merge the several DigitalBrain regions that can share one
+        // Allen label, and only the atlas knows that mapping.
+        //
+        // Reduced to the cell count on the way out: regionSupport() answers with the
+        // full { datasets, donors, cells } evidence record, and the weighting is by
+        // cells. Handing the record over unchanged would leave every weight at zero,
+        // which blanks the whole cloud without raising anything.
+        function supportFor(symbol, values) {
+            const support = {};
+            Object.keys(values).forEach((acronym) => {
+                const evidence = data.regionSupport(symbol, acronym);
+                const cells = evidence && Number(evidence.cells);
+                if (cells > 0) support[acronym] = cells;
+            });
+            return support;
+        }
+
         // Painting and tearing the layer down are different intents, and only the
         // second one belongs to the atlas's clearGeneValues() -- that call also drops
         // back to the cells layer and hands the scope filters back. Routing "no gene
         // selected" through it meant a metric or rule click ejected the user from the
         // layer they had just entered. With no gene the overlay is simply empty, which
         // is a legitimate state of the gene layer.
+        //
+        // Genes go over in selection order because that order fixes each gene's offset
+        // angle in the cloud, and each carries the chip colour so the chips and the
+        // cloud cannot drift apart.
         function repaint() {
             if (!atlas || typeof atlas.applyGeneValues !== "function") return;
+            const scale = data.densityScale();
+            // No calibration means the index predates it. The atlas would throw, which
+            // is right for a stale payload but wrong as an unhandled error here, so say
+            // it in the row instead.
+            if (!scale) {
+                if (dom.dataNote) {
+                    dom.dataNote.textContent = "This gene atlas build ships no density calibration, so expression cannot be drawn. Re-export the atlas data.";
+                }
+                return;
+            }
             atlas.applyGeneValues({
-                values: state.active ? currentValues() : {},
                 metric: data.metric(),
-                symbol: state.active,
+                rule: data.rule(),
+                scale,
+                genes: state.genes.map((symbol) => {
+                    const values = valuesFor(symbol);
+                    return {
+                        symbol,
+                        colour: colourFor(symbol),
+                        values,
+                        support: supportFor(symbol, values),
+                    };
+                }),
             });
         }
 

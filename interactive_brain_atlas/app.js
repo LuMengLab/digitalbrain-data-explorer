@@ -95,10 +95,16 @@
     cellTypes: [...source.cellTypes],
     selectedCellType: ALL_CELL_TYPES,
     dataLayer: "cells",
-    // Gene expression layer: { acronym: value } for the active gene. A region that
-    // is absent from this table has no data and must never be drawn as a zero.
-    geneValues: null,
+    // Gene expression layer. An ordered array of
+    // { symbol, colour, values: { acronym: value }, support: { acronym: cells }, byLabel }
+    // -- ordered because the index fixes each gene's offset angle. A region absent from
+    // a gene's table has no data and must never be drawn as a zero.
+    genes: null,
+    // The density calibration the values are to be read against. Never defaulted: it
+    // ships with the data in index.json, so a missing one is a version mismatch.
+    geneScale: null,
     geneMetric: "mean",
+    geneRule: "cell_weighted",
     geneDetailProvider: null,
     anatomyStyle: "boundaries",
     connectivityPercentile: 96,
@@ -672,9 +678,14 @@
 
   // Value provider for the marker colour/radius channel. Returns null for "no data"
   // so callers can paint neutral grey and keep the region out of the colour range.
+  //
+  // Region-level and first-gene-only on purpose: this feeds the range readout and the
+  // detail panel, which list one region at a time and so are unaffected by the
+  // label-level merging the point cloud needs.
   function geneValueFor(region) {
-    if (!state.geneValues) return null;
-    const value = state.geneValues[region.acronym];
+    const gene = state.genes && state.genes[0];
+    if (!gene) return null;
+    const value = gene.values[region.acronym];
     return typeof value === "number" && Number.isFinite(value) ? value : null;
   }
 
@@ -707,6 +718,21 @@
   function labelIndicesForRegion(region) {
     return new Set(region?.geometryMapping?.labelIndices || []);
   }
+
+  // Inverse of regionMappings: which DigitalBrain acronyms claim each Allen label.
+  // Allen has one hippocampus-head label against ten DigitalBrain subregions, so the
+  // point cloud's colouring unit has to be the label, not the region. Built once --
+  // it is a property of the geometry, not of whichever genes are selected.
+  const labelToRegions = (() => {
+    const claims = new Map();
+    Object.entries(anatomy.regionMappings).forEach(([acronym, mapping]) => {
+      (mapping.labelIndices || []).forEach((labelIndex) => {
+        if (!claims.has(labelIndex)) claims.set(labelIndex, []);
+        claims.get(labelIndex).push(acronym);
+      });
+    });
+    return claims;
+  })();
 
   function atlasLabelStyles(boundaryLayer = false) {
     const selectedLabels = labelIndicesForRegion(state.selectedRegion);
@@ -1770,7 +1796,7 @@
         : "Drag to rotate anatomy · Scroll to zoom · Click a connectivity node";
     if (geneLayer) {
       const range = getGeneRange();
-      const covered = state.geneValues ? getVisibleRegions().length : 0;
+      const covered = state.genes && state.genes.length ? getVisibleRegions().length : 0;
       dom.datasetStatus.classList.add("observed");
       dom.datasetStatus.innerHTML = `
         <span class="status-dot"></span>
@@ -3020,20 +3046,62 @@
       clearLinkedScope();
     },
 
-    // Gene expression layer. `values` is { acronym: number }; an absent acronym
-    // means "no data" and stays out of both the colour range and the canvas.
+    // Gene expression layer. The host hands over an ordered array of genes, the
+    // aggregation rule and metric they were computed under, and the density
+    // calibration to read them against:
+    //
+    //   { metric, rule, scale: { breakpoint, reference, lowKnots },
+    //     genes: [{ symbol, colour, values: { acronym: n }, support: { acronym: cells } }] }
+    //
+    // The order is load-bearing: it fixes each gene's offset angle. The colour comes
+    // from the host because the chips and the cloud can only have one source of truth.
+    // An acronym absent from a gene's values means "no data" and stays out of both the
+    // colour range and the canvas.
     applyGeneValues(payload) {
-      const values = (payload && payload.values) || {};
-      state.geneValues = values;
-      if (payload && payload.metric) {
+      const scale = payload && payload.scale;
+      // gene_atlas_web/ is gitignored, so index.json is a deployment artefact and a
+      // stale payload against new code is a real scenario. Refuse it loudly: defaulting
+      // to some range would render every density quietly wrong with nothing on screen
+      // to say so.
+      if (
+        !scale
+        || typeof scale.breakpoint !== "number"
+        || typeof scale.reference !== "number"
+        || !Array.isArray(scale.lowKnots)
+        || scale.lowKnots.length !== 13
+      ) {
+        throw new Error(
+          `applyGeneValues needs a densityScale for ${(payload && payload.rule) || "?"}/`
+          + `${(payload && payload.metric) || "?"}`,
+        );
+      }
+      if (payload.metric) {
         state.geneMetric = payload.metric === "detection" ? "detection" : "mean";
       }
+      if (payload.rule) {
+        state.geneRule = payload.rule === "donor_balanced" ? "donor_balanced" : "cell_weighted";
+      }
+      state.geneScale = scale;
+      state.genes = (payload.genes || []).map((gene) => {
+        const values = gene.values || {};
+        const support = gene.support || {};
+        return {
+          symbol: gene.symbol,
+          colour: gene.colour,
+          values,
+          support,
+          byLabel: GenePointCloud.aggregateByLabel(
+            { values, support }, labelToRegions, anatomy.labels.length,
+          ),
+        };
+      });
       selectDataLayer("genes");
       return this.geneSummary();
     },
 
     clearGeneValues() {
-      state.geneValues = null;
+      state.genes = null;
+      state.geneScale = null;
       selectDataLayer("cells");
       return this.geneSummary();
     },
@@ -3064,12 +3132,27 @@
       return {
         layer: state.dataLayer,
         metric: state.geneMetric,
+        rule: state.geneRule,
         regions:
           state.dataLayer === "genes"
             ? getVisibleRegions().map((region) => region.acronym)
             : [],
         min: range.min,
         max: range.max,
+        // One entry per gene, in the order the host gave them. min/max are measured on
+        // the aggregated label values, which is what the cloud actually draws, so a
+        // legend row describes the same numbers the viewer is looking at.
+        genes: (state.genes || []).map((gene) => {
+          let min = null;
+          let max = null;
+          gene.byLabel.hasValue.forEach((present, labelIndex) => {
+            if (!present) return;
+            const value = gene.byLabel.values[labelIndex];
+            if (min === null || value < min) min = value;
+            if (max === null || value > max) max = value;
+          });
+          return { symbol: gene.symbol, colour: gene.colour, min, max };
+        }),
       };
     },
 

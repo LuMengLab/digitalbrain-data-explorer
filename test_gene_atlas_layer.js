@@ -13,6 +13,31 @@ const { JSDOM } = require('jsdom');
 const WEB_DIR = __dirname;
 const ATLAS_DIR = path.join(WEB_DIR, 'interactive_brain_atlas');
 
+// The real cell_weighted/mean calibration, as index.json ships it. The atlas refuses
+// a payload without one, so every applyGeneValues call in this file has to carry it.
+const SCALE = {
+  breakpoint: 0.5201,
+  reference: 3.5091,
+  lowKnots: [0, 0.0008, 0.003, 0.0085, 0.0196, 0.0372, 0.0602,
+             0.0889, 0.1253, 0.1729, 0.2382, 0.3379, 0.5201],
+};
+
+// Most tests here care about one gene's values, not about the multi-gene seam.
+function oneGene(values, options) {
+  const extra = options || {};
+  return {
+    metric: extra.metric || 'mean',
+    rule: extra.rule || 'cell_weighted',
+    scale: extra.scale === undefined ? SCALE : extra.scale,
+    genes: [{
+      symbol: extra.symbol || 'AIF1',
+      colour: extra.colour || '#4cc9f0',
+      values,
+      support: extra.support || Object.fromEntries(Object.keys(values).map((key) => [key, 1000])),
+    }],
+  };
+}
+
 function stubContext() {
   // The atlas only draws; nothing reads back from the context except measureText.
   const noop = () => {};
@@ -108,7 +133,7 @@ function someMappedAcronyms(window, count) {
 
 function testGeneLayerIsAcceptedByTheLayerWhitelist() {
   const { window, drawOneFrame } = bootAtlas();
-  const summary = window.DigitalBrainAtlas.applyGeneValues({ values: {}, metric: 'mean' });
+  const summary = window.DigitalBrainAtlas.applyGeneValues(oneGene({}));
   assert.equal(summary.layer, 'genes', 'the layer whitelist must accept "genes"');
   assert.doesNotThrow(drawOneFrame, 'rendering the genes layer must not throw');
 }
@@ -123,7 +148,7 @@ function testGeneValuesDriveRegionColouring() {
   values[picked[0]] = 0.2;
   values[picked[1]] = 0.9;
   values[picked[2]] = 0.5;
-  atlas.applyGeneValues({ values, metric: 'mean' });
+  atlas.applyGeneValues(oneGene(values));
   drawOneFrame();
 
   const visible = atlas.geneSummary().regions;
@@ -139,7 +164,7 @@ function testRangeUsesGeneValuesInGeneLayer() {
   values[picked[0]] = 0.25;
   values[picked[1]] = 1.75;
 
-  atlas.applyGeneValues({ values, metric: 'mean' });
+  atlas.applyGeneValues(oneGene(values));
   drawOneFrame();
 
   const summary = atlas.geneSummary();
@@ -150,7 +175,7 @@ function testRangeUsesGeneValuesInGeneLayer() {
 function testAllMissingGeneValuesDoesNotThrow() {
   const { window, drawOneFrame } = bootAtlas();
   const atlas = window.DigitalBrainAtlas;
-  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({}));
   assert.doesNotThrow(drawOneFrame, 'an all-missing gene layer must not divide by zero');
 
   const summary = atlas.geneSummary();
@@ -166,7 +191,7 @@ function testMissingRegionsAreNotRenderedAsZero() {
   const values = {};
   values[picked[0]] = 0.0;   // a real zero must stay visible
   values[picked[1]] = 0.8;
-  atlas.applyGeneValues({ values, metric: 'mean' });
+  atlas.applyGeneValues(oneGene(values));
   drawOneFrame();
 
   const visible = atlas.geneSummary().regions;
@@ -178,7 +203,7 @@ function testMissingRegionsAreNotRenderedAsZero() {
 function testLeavingTheGeneLayerRestoresTheCellsLayer() {
   const { window, drawOneFrame } = bootAtlas();
   const atlas = window.DigitalBrainAtlas;
-  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({}));
   assert.equal(atlas.geneSummary().layer, 'genes');
 
   atlas.clearGeneValues();
@@ -218,7 +243,7 @@ function testGeneLayerBypassesTheExplorerScopeFilter() {
   picked.forEach((acronym, i) => {
     values[acronym] = 0.3 + i * 0.2;
   });
-  atlas.applyGeneValues({ values, metric: 'mean' });
+  atlas.applyGeneValues(oneGene(values));
   drawOneFrame();
 
   const visible = atlas.geneSummary().regions;
@@ -230,7 +255,7 @@ function testGeneLayerBypassesTheExplorerScopeFilter() {
 
 function testScopeFiltersAreDisabledInGeneLayer() {
   const { window, drawOneFrame } = bootAtlas();
-  window.DigitalBrainAtlas.applyGeneValues({ values: {}, metric: 'mean' });
+  window.DigitalBrainAtlas.applyGeneValues(oneGene({}));
   drawOneFrame();
 
   ['collectionSelect', 'datasetSelect', 'donorSelect'].forEach((id) => {
@@ -255,7 +280,7 @@ function testScopeLockMarksTheFilterRowAsATooltipHost() {
     'the filter row is not locked outside the gene layer',
   );
 
-  window.DigitalBrainAtlas.applyGeneValues({ values: {}, metric: 'mean' });
+  window.DigitalBrainAtlas.applyGeneValues(oneGene({}));
   drawOneFrame();
   // The class is the hook CSS uses to show the lock badge and turn the note into a
   // hover tooltip instead of an inline paragraph that squeezes the selects.
@@ -279,7 +304,7 @@ function testLeavingGeneLayerRestoresTheScopeFilters() {
   const atlas = window.DigitalBrainAtlas;
   const collection = window.document.getElementById('collectionSelect');
 
-  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({}));
   drawOneFrame();
   assert.equal(collection.disabled, true);
 
@@ -291,7 +316,7 @@ function testLeavingGeneLayerRestoresTheScopeFilters() {
 
 function testConnectivityChromeStaysHiddenInGeneLayer() {
   const { window, drawOneFrame } = bootAtlas();
-  window.DigitalBrainAtlas.applyGeneValues({ values: {}, metric: 'mean' });
+  window.DigitalBrainAtlas.applyGeneValues(oneGene({}));
   drawOneFrame();
 
   const doc = window.document;
@@ -312,7 +337,7 @@ function testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked() {
   const dataset = window.document.getElementById('datasetSelect');
   assert.equal(dataset.disabled, true, 'datasetSelect is expected to start locked');
 
-  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({}));
   drawOneFrame();
   atlas.clearGeneValues();
   drawOneFrame();
@@ -327,7 +352,7 @@ function testGeneLayerRestoresFiltersUnlockedByTheHost() {
   // Stand in for the host having unlocked the select after a collection was picked.
   dataset.disabled = false;
 
-  atlas.applyGeneValues({ values: {}, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({}));
   drawOneFrame();
   assert.equal(dataset.disabled, true, 'the gene layer locks every scope filter');
 
@@ -378,7 +403,7 @@ function testGeneLayerDetailShowsTheGeneNotConnectivity() {
   const [acronym] = someMappedAcronyms(window, 1);
 
   atlas.setGeneDetailProvider(() => geneDetailFixture());
-  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
   drawOneFrame();
   selectRegion(window, acronym);
 
@@ -397,7 +422,7 @@ function testGeneLayerDetailListsCellClassValues() {
   const [acronym] = someMappedAcronyms(window, 1);
 
   atlas.setGeneDetailProvider(() => geneDetailFixture());
-  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
   drawOneFrame();
   selectRegion(window, acronym);
 
@@ -423,7 +448,7 @@ function testCellClassesWithoutDataSaySoInsteadOfZero() {
     // Only one class carries data; every other class in the vocabulary is absent.
     rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
   }));
-  atlas.applyGeneValues({ values: { [acronym]: 3.25 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 3.25 }));
   drawOneFrame();
   selectRegion(window, acronym);
 
@@ -448,7 +473,7 @@ function testDetailReportsTheSupportBehindTheValue() {
   const [acronym] = someMappedAcronyms(window, 1);
 
   atlas.setGeneDetailProvider(() => geneDetailFixture());
-  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
   drawOneFrame();
   selectRegion(window, acronym);
 
@@ -475,7 +500,7 @@ function testARegionWithoutGeneDataSaysSo() {
           rows: [],
         },
   );
-  atlas.applyGeneValues({ values: { [picked[0]]: 2.68 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [picked[0]]: 2.68 }));
   drawOneFrame();
   selectRegion(window, picked[1]);
 
@@ -498,7 +523,7 @@ function testDetailStatesWhenTheCellClassTierIsUnavailable() {
     detailAvailable: false,
     rows: [],
   }));
-  atlas.applyGeneValues({ values: { [acronym]: 3.1 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 3.1 }));
   drawOneFrame();
   selectRegion(window, acronym);
 
@@ -517,7 +542,7 @@ function testDetailWithoutAProviderDoesNotThrow() {
   const atlas = window.DigitalBrainAtlas;
   const [acronym] = someMappedAcronyms(window, 1);
 
-  atlas.applyGeneValues({ values: { [acronym]: 1.5 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 1.5 }));
   drawOneFrame();
   assert.doesNotThrow(() => selectRegion(window, acronym));
 }
@@ -540,18 +565,72 @@ function testRepaintingRefreshesTheOpenDetailPanel() {
     detailAvailable: true,
     rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
   }));
-  atlas.applyGeneValues({ values: { [acronym]: 2.68 }, metric: 'mean' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
   drawOneFrame();
   selectRegion(window, acronym);
   assert.match(window.document.getElementById('focusValue').textContent, /2\.68/);
 
   metric = 'detection';
-  atlas.applyGeneValues({ values: { [acronym]: 0.42 }, metric: 'detection' });
+  atlas.applyGeneValues(oneGene({ [acronym]: 0.42 }, { metric: 'detection' }));
   drawOneFrame();
 
   const value = window.document.getElementById('focusValue').textContent;
   assert.match(value, /42/, `the panel must follow the metric switch, got "${value}"`);
   assert.match(window.document.getElementById('focusLabel').textContent, /detection/i);
+}
+
+function testApplyGeneValuesRejectsAMissingCalibration() {
+  // index.json lives outside git (gitignored), so a stale payload paired with new code
+  // is a real deployment scenario. It must fail loudly, not silently pick a default
+  // range: every density would be quietly wrong with nothing on screen to say so.
+  const { window } = bootAtlas();
+  assert.throws(
+    () => window.DigitalBrainAtlas.applyGeneValues({
+      metric: 'mean',
+      rule: 'cell_weighted',
+      genes: [{ symbol: 'AIF1', colour: '#61ddb2', values: {}, support: {} }],
+    }),
+    /densityScale|calibration/i,
+    'a payload without a scale must be refused',
+  );
+}
+
+function testApplyGeneValuesRejectsATruncatedCalibration() {
+  // A 13-knot low segment is what normalise() indexes against; a short table would
+  // read undefined knots as NaN and quietly blank the cloud instead of failing.
+  const { window } = bootAtlas();
+  assert.throws(
+    () => window.DigitalBrainAtlas.applyGeneValues(oneGene({}, {
+      scale: { breakpoint: 0.5201, reference: 3.5091, lowKnots: [0, 0.1, 0.5201] },
+    })),
+    /densityScale|calibration/i,
+    'a calibration with the wrong knot count must be refused',
+  );
+}
+
+function testApplyGeneValuesAcceptsSeveralGenes() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 2);
+  const summary = atlas.applyGeneValues({
+    metric: 'mean',
+    rule: 'cell_weighted',
+    scale: SCALE,
+    genes: [
+      { symbol: 'AIF1', colour: '#61ddb2', values: { [picked[0]]: 0.4 }, support: { [picked[0]]: 1000 } },
+      { symbol: 'GFAP', colour: '#f0a36a', values: { [picked[1]]: 1.2 }, support: { [picked[1]]: 2000 } },
+    ],
+  });
+  assert.equal(summary.layer, 'genes');
+  assert.deepEqual(summary.genes.map((gene) => gene.symbol), ['AIF1', 'GFAP'],
+    'the summary must report each gene in the order given');
+  assert.deepEqual(summary.genes.map((gene) => gene.colour), ['#61ddb2', '#f0a36a'],
+    'the host owns the colour, so the summary must echo it back unchanged');
+  // Proves the label aggregation actually resolved: min/max are measured on the merged
+  // label values, so a zero weight anywhere would leave these null and the cloud dark.
+  assert.equal(summary.genes[0].max, 0.4, 'the aggregated label value must reach the summary');
+  assert.equal(summary.genes[1].max, 1.2, 'each gene is aggregated on its own values');
+  assert.doesNotThrow(drawOneFrame);
 }
 
 function main() {
@@ -577,6 +656,9 @@ function main() {
     ['testDetailStatesWhenTheCellClassTierIsUnavailable', testDetailStatesWhenTheCellClassTierIsUnavailable],
     ['testDetailWithoutAProviderDoesNotThrow', testDetailWithoutAProviderDoesNotThrow],
     ['testRepaintingRefreshesTheOpenDetailPanel', testRepaintingRefreshesTheOpenDetailPanel],
+    ['testApplyGeneValuesRejectsAMissingCalibration', testApplyGeneValuesRejectsAMissingCalibration],
+    ['testApplyGeneValuesRejectsATruncatedCalibration', testApplyGeneValuesRejectsATruncatedCalibration],
+    ['testApplyGeneValuesAcceptsSeveralGenes', testApplyGeneValuesAcceptsSeveralGenes],
   ];
   cases.forEach(([name, fn]) => {
     fn();

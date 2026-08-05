@@ -76,6 +76,15 @@
         return state.metric;
     }
 
+    // The density calibration for the current rule and metric. Returns null rather
+    // than a fallback when the index predates the calibration: the atlas refuses a
+    // payload without one, which is the point -- a made-up range would render every
+    // density quietly wrong.
+    function densityScale() {
+        const table = state.index && state.index.densityScale;
+        return (table && table[rule()] && table[rule()][metric()]) || null;
+    }
+
     function scope() {
         return (state.index && state.index.scope) || {};
     }
@@ -291,6 +300,7 @@
         setMetric,
         rule,
         metric,
+        densityScale,
         scope,
         cellTypes,
         isLoaded,

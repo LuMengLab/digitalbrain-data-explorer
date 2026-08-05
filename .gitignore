@@ -2,6 +2,13 @@ node_modules/
 __pycache__/
 *.pyc
 
+# 导出与筛选过程的运行日志：可由对应脚本重新产生，不入库。
+logs/
+
+# 特异性扫描的诊断表：由 scripts/rank_gene_specificity.py 重建（约 40 分钟），
+# 只用于人工核对入选依据，不入库。
+data/gene_specificity_ranking.csv
+
 # Stage A 的本地缓存（约 5.7 GB）：可由 scripts/run_gene_atlas_stage_a.py 重建，不入库。
 gene_atlas_cache/
 # Stage C 的 Web 产物（全编码区域级约 320 MB / 近 2 万文件）：由 scripts/export_gene_atlas_web.py

@@ -38,6 +38,24 @@ function oneGene(values, options) {
   };
 }
 
+// Several genes at once, which is the state the region panel and the visible-region
+// set have to survive: entries is [{ symbol, values, colour? }].
+function severalGenes(entries, options) {
+  const extra = options || {};
+  return {
+    metric: extra.metric || 'mean',
+    rule: extra.rule || 'cell_weighted',
+    active: extra.active || entries[0].symbol,
+    scale: extra.scale === undefined ? SCALE : extra.scale,
+    genes: entries.map((entry, index) => ({
+      symbol: entry.symbol,
+      colour: entry.colour || ['#4cc9f0', '#f7b267', '#b5e48c'][index % 3],
+      values: entry.values,
+      support: Object.fromEntries(Object.keys(entry.values).map((key) => [key, 1000])),
+    })),
+  };
+}
+
 function stubContext() {
   // The atlas only draws; nothing reads back from the context except measureText.
   const noop = () => {};
@@ -123,6 +141,56 @@ function bootAtlas(options) {
   };
   drawOneFrame();
   return { window, drawOneFrame };
+}
+
+// A panel outside the atlas -- the comparison charts under the 3D view -- has to follow
+// the canvas selection, and polling for it is how two copies of one state drift apart.
+// So the atlas announces it, and the announcement is the contract.
+function testTheAtlasAnnouncesItsSelection() {
+  const { window } = bootAtlas();
+  const seen = [];
+  window.addEventListener('digitalbrain-region-select', (event) => seen.push(event.detail));
+
+  const [acronym] = someMappedAcronyms(window, 1);
+  window.DigitalBrainAtlas.selectRegion(acronym);
+  assert.equal(seen.length, 1, 'selecting announces once');
+  assert.equal(seen[0].acronym, acronym);
+  assert.equal(seen[0].isGroup, false);
+  assert.deepEqual([...seen[0].members], [acronym],
+    'a single region stands for itself, so a listener can treat both cases alike');
+  assert.ok(seen[0].name && seen[0].group, 'named, because the acronym is all the payloads carry');
+
+  // Escape clears the selection; the panel has to hear that too, or it would keep a
+  // region highlighted that the atlas no longer has open.
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1], null, 'cleared is announced as null, not as an empty region');
+}
+
+// A group aggregate would travel as its member list rather than as an acronym, but that
+// path is not reachable from either shipped page -- the schematic anatomy mode that
+// selects groups is hidden in both -- so there is nothing here to drive it through. The
+// consuming side of that shape is covered in test_gene_compare_view.js, which dispatches
+// the event directly.
+
+// The gene payloads identify regions by acronym only, so a host-side control needs the
+// atlas to name them -- and to say which ones the canvas can actually place, because that
+// is the difference between a bar the reader can click through to 3D and one they cannot.
+function testTheRegionCatalogueIsReadableByTheHost() {
+  const { window } = bootAtlas();
+  const catalogue = window.DigitalBrainAtlas.regionCatalogue();
+
+  assert.equal(catalogue.length, window.DIGITALBRAIN_REGION_DATA.regions.length);
+  assert.ok(catalogue.every((region) => region.acronym && region.name && region.group),
+    'every entry is named and grouped');
+  assert.ok(catalogue.some((region) => region.hasAnatomy),
+    'and says which ones the canvas can place');
+  const [placeable] = someMappedAcronyms(window, 1);
+  assert.equal(
+    catalogue.find((region) => region.acronym === placeable).hasAnatomy,
+    true,
+    'hasAnatomy must agree with knowsRegion, or the two would disagree about the same parcel',
+  );
 }
 
 function someMappedAcronyms(window, count) {
@@ -378,24 +446,48 @@ function selectRegion(window, acronym) {
 function detailRows(window) {
   return [...window.document.querySelectorAll('#compositionBars .composition-row')].map(
     (row) => ({
-      label: row.querySelector('span').textContent,
+      label: row.querySelector('.composition-label').textContent,
       value: row.querySelector('strong') ? row.querySelector('strong').textContent : '',
+      colour: row.style.getPropertyValue('--class-colour'),
+      missing: row.classList.contains('composition-missing'),
     }),
   );
 }
 
-function geneDetailFixture() {
+// The provider answers for the whole selection, so even a single gene arrives as a
+// one-entry list with the active symbol named.
+function geneDetailFixture(overrides) {
+  const extra = overrides || {};
   return {
-    symbol: 'GFAP',
-    metric: 'mean',
-    value: 2.68,
-    support: { datasets: 13, donors: 246, cells: 1204913 },
-    detailAvailable: true,
-    rows: [
-      { cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 },
-      { cellType: 'Microglia', mean: 0.4, detection: 0.1, cells: 10 },
+    metric: extra.metric || 'mean',
+    rule: extra.rule || 'cell_weighted',
+    active: extra.active || 'GFAP',
+    genes: extra.genes || [
+      {
+        symbol: 'GFAP',
+        colour: '#4cc9f0',
+        value: 2.68,
+        support: { datasets: 13, donors: 246, cells: 1204913 },
+        detailAvailable: true,
+        rows: [
+          { cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 },
+          { cellType: 'Microglia', mean: 0.4, detection: 0.1, cells: 10 },
+        ],
+      },
     ],
   };
+}
+
+function geneRegionRows(window) {
+  return [...window.document.querySelectorAll('#geneRegionRows .gene-region-row')].map(
+    (row) => ({
+      symbol: row.dataset.gene,
+      value: row.querySelector('.gene-region-value').textContent,
+      rank: row.querySelector('.gene-region-rank').textContent,
+      active: row.classList.contains('active'),
+      missing: row.classList.contains('missing'),
+    }),
+  );
 }
 
 function testGeneLayerDetailShowsTheGeneNotConnectivity() {
@@ -440,14 +532,16 @@ function testCellClassesWithoutDataSaySoInsteadOfZero() {
   const atlas = window.DigitalBrainAtlas;
   const [acronym] = someMappedAcronyms(window, 1);
 
-  atlas.setGeneDetailProvider(() => ({
-    symbol: 'GFAP',
-    metric: 'mean',
-    value: 3.25,
-    support: { datasets: 1, donors: 1, cells: 40 },
-    detailAvailable: true,
-    // Only one class carries data; every other class in the vocabulary is absent.
-    rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
+  atlas.setGeneDetailProvider(() => geneDetailFixture({
+    genes: [{
+      symbol: 'GFAP',
+      colour: '#4cc9f0',
+      value: 3.25,
+      support: { datasets: 1, donors: 1, cells: 40 },
+      detailAvailable: true,
+      // Only one class carries data; every other class in the vocabulary is absent.
+      rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
+    }],
   }));
   atlas.applyGeneValues(oneGene({ [acronym]: 3.25 }));
   drawOneFrame();
@@ -463,6 +557,164 @@ function testCellClassesWithoutDataSaySoInsteadOfZero() {
   assert.ok(
     missing.every((row) => !/^0(\.0+)?%?$/.test(row.value.trim())),
     'absent classes must not render as 0',
+  );
+}
+
+// The cloud draws every selected gene, so the panel has to report every selected
+// gene. Showing only the active one meant six clouds and one number, and no way to
+// read the comparison the multi-gene selection was made for.
+function testEverySelectedGeneIsListedForTheRegion() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => geneDetailFixture({
+    active: 'AQP4',
+    genes: [
+      { symbol: 'GFAP', colour: '#4cc9f0', value: 2.68, support: null, detailAvailable: true, rows: [] },
+      {
+        symbol: 'AQP4',
+        colour: '#f7b267',
+        value: 1.34,
+        support: { datasets: 3, donors: 8, cells: 900 },
+        detailAvailable: true,
+        rows: [{ cellType: 'Astrocyte', mean: 1.34, detection: 0.5, cells: 40 }],
+      },
+      { symbol: 'MBP', colour: '#b5e48c', value: null, support: null, detailAvailable: true, rows: [] },
+    ],
+  }));
+  atlas.applyGeneValues(severalGenes([
+    { symbol: 'GFAP', values: { [acronym]: 2.68 } },
+    { symbol: 'AQP4', values: { [acronym]: 1.34 } },
+  ], { active: 'AQP4' }));
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const rows = geneRegionRows(window);
+  assert.deepEqual(rows.map((row) => row.symbol), ['GFAP', 'AQP4', 'MBP'],
+    'every selected gene must be listed, in chip order');
+  assert.match(rows[0].value, /2\.68/);
+  assert.match(rows[1].value, /1\.34/);
+  // Never a zero: MBP was not measured in this region at all.
+  assert.match(rows[2].value, /no data/i);
+  assert.equal(rows[2].missing, true);
+  assert.deepEqual(rows.map((row) => row.active), [false, true, false],
+    'only the active gene is marked, and it is the one the host named');
+
+  // The headline and the per-class breakdown belong to the active gene, not to the
+  // first chip.
+  assert.match(window.document.getElementById('focusLabel').textContent, /AQP4/);
+  assert.match(window.document.getElementById('focusValue').textContent, /1\.34/);
+}
+
+// The panel is also the fastest way to switch genes: you are already looking at the
+// region that made you want the other one. The atlas cannot promote a gene itself,
+// so it must ask the host that owns the chips.
+function testClickingAGeneRowAsksTheHostToPromoteIt() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => geneDetailFixture({
+    active: 'GFAP',
+    genes: [
+      { symbol: 'GFAP', colour: '#4cc9f0', value: 2.68, support: null, detailAvailable: true, rows: [] },
+      { symbol: 'AQP4', colour: '#f7b267', value: 1.34, support: null, detailAvailable: true, rows: [] },
+    ],
+  }));
+  atlas.applyGeneValues(severalGenes([
+    { symbol: 'GFAP', values: { [acronym]: 2.68 } },
+    { symbol: 'AQP4', values: { [acronym]: 1.34 } },
+  ]));
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const asked = [];
+  window.addEventListener('digitalbrain-gene-select', (event) => asked.push(event.detail.symbol));
+  window.document.querySelector('#geneRegionRows [data-gene="AQP4"]').click();
+  assert.deepEqual(asked, ['AQP4'], 'the click must reach the host as a request');
+}
+
+// A parcel lit up for one gene but not for the active one used to be filtered out of
+// the visible set entirely: the cloud showed it, the markers did not, and it could
+// not be clicked -- so its panel, the only place the two genes are compared side by
+// side, was unreachable.
+function testARegionCarriedByAnotherGeneStaysReachable() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 2);
+
+  atlas.applyGeneValues(severalGenes([
+    { symbol: 'GFAP', values: { [picked[0]]: 2.68 } },
+    { symbol: 'AQP4', values: { [picked[1]]: 1.34 } },
+  ], { active: 'GFAP' }));
+  drawOneFrame();
+
+  const visible = atlas.geneSummary().regions;
+  assert.ok(visible.includes(picked[0]), "the active gene's own region is visible");
+  assert.ok(
+    visible.includes(picked[1]),
+    `a region carried only by another selected gene must stay on screen, got ${JSON.stringify(visible)}`,
+  );
+}
+
+// renderGeneComposition writes the per-class values into #compositionBars, which
+// lives in a section the layer switch used to hide outside the cells layer: the
+// breakdown was computed, written, and never visible.
+function testThePerClassSectionIsVisibleInTheGeneLayer() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => geneDetailFixture());
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  assert.equal(window.document.getElementById('compositionSection').hidden, false,
+    'the per-class breakdown must be on screen in the gene layer');
+  assert.equal(window.document.getElementById('geneRegionSection').hidden, false,
+    'so must the list of selected genes');
+  // And the heading has to say whose values these are.
+  assert.match(window.document.getElementById('compositionTitle').textContent, /GFAP/);
+
+  atlas.clearGeneValues();
+  assert.equal(window.document.getElementById('geneRegionSection').hidden, true,
+    'the gene list belongs to the gene layer only');
+}
+
+// Every class row carries its own colour, so the breakdown, the legend and the
+// markers agree. A flat grey list made the panel look like it had no palette at all.
+function testEveryClassRowCarriesItsClassColour() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  atlas.setGeneDetailProvider(() => geneDetailFixture());
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  const rows = detailRows(window);
+  const astrocyte = rows.find((row) => row.label === 'Astrocyte');
+  assert.ok(astrocyte, 'Astrocyte should be listed');
+  assert.equal(
+    astrocyte.colour,
+    atlas.cellTypeColour('Astrocyte'),
+    'the row must use the same palette entry the canvas paints that class with',
+  );
+  const measured = rows.filter((row) => !row.missing);
+  assert.ok(measured.length >= 2, 'the fixture measures two classes');
+  assert.equal(
+    new Set(measured.map((row) => row.colour)).size,
+    measured.length,
+    'each measured class gets a distinct colour, not one shared grey',
+  );
+  // Absent classes keep the muted treatment; the colour is still declared so the
+  // dot is dimmed rather than recoloured.
+  assert.ok(
+    rows.some((row) => row.missing),
+    'the fixture leaves most classes without data',
   );
 }
 
@@ -492,14 +744,16 @@ function testARegionWithoutGeneDataSaysSo() {
   atlas.setGeneDetailProvider((acronym) =>
     acronym === picked[0]
       ? geneDetailFixture()
-      : {
-          symbol: 'GFAP',
-          metric: 'mean',
-          value: null,
-          support: null,
-          detailAvailable: true,
-          rows: [],
-        },
+      : geneDetailFixture({
+          genes: [{
+            symbol: 'GFAP',
+            colour: '#4cc9f0',
+            value: null,
+            support: null,
+            detailAvailable: true,
+            rows: [],
+          }],
+        }),
   );
   atlas.applyGeneValues(oneGene({ [picked[0]]: 2.68 }));
   drawOneFrame();
@@ -516,13 +770,16 @@ function testDetailStatesWhenTheCellClassTierIsUnavailable() {
   const atlas = window.DigitalBrainAtlas;
   const [acronym] = someMappedAcronyms(window, 1);
 
-  atlas.setGeneDetailProvider(() => ({
-    symbol: 'SNAP25',
-    metric: 'mean',
-    value: 3.1,
-    support: { datasets: 5, donors: 9, cells: 10 },
-    detailAvailable: false,
-    rows: [],
+  atlas.setGeneDetailProvider(() => geneDetailFixture({
+    active: 'SNAP25',
+    genes: [{
+      symbol: 'SNAP25',
+      colour: '#4cc9f0',
+      value: 3.1,
+      support: { datasets: 5, donors: 9, cells: 10 },
+      detailAvailable: false,
+      rows: [],
+    }],
   }));
   atlas.applyGeneValues(oneGene({ [acronym]: 3.1 }));
   drawOneFrame();
@@ -558,13 +815,16 @@ function testRepaintingRefreshesTheOpenDetailPanel() {
   const [acronym] = someMappedAcronyms(window, 1);
 
   let metric = 'mean';
-  atlas.setGeneDetailProvider(() => ({
-    symbol: 'GFAP',
+  atlas.setGeneDetailProvider(() => geneDetailFixture({
     metric,
-    value: metric === 'mean' ? 2.68 : 0.42,
-    support: { datasets: 13, donors: 246, cells: 1204913 },
-    detailAvailable: true,
-    rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
+    genes: [{
+      symbol: 'GFAP',
+      colour: '#4cc9f0',
+      value: metric === 'mean' ? 2.68 : 0.42,
+      support: { datasets: 13, donors: 246, cells: 1204913 },
+      detailAvailable: true,
+      rows: [{ cellType: 'Astrocyte', mean: 3.25, detection: 0.88, cells: 40 }],
+    }],
   }));
   atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
   drawOneFrame();
@@ -900,6 +1160,136 @@ function testLeavingTheGeneLayerHidesTheGenesLegend() {
     'and the cells legend must come back');
 }
 
+// The cells layer used to repeat one scope average across every sampled parcel, so
+// clicking through regions never changed a bar. The bridge now derives a per-region
+// breakdown from the donor mix, and the panel has to actually use it.
+function testLinkedScopeCompositionFollowsTheSelectedRegion() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 2);
+
+  const regionCells = {};
+  regionCells[picked[0]] = 1000;
+  regionCells[picked[1]] = 1000;
+  atlas.applyScope({
+    type: 'digitalbrain-scope',
+    scopeKey: 'collection',
+    scopeLabel: 'Collection One',
+    selection: {},
+    activeRegions: picked,
+    regionCells,
+    cellTypes: ['Astrocyte', 'Microglia'],
+    composition: { Astrocyte: 0.5, Microglia: 0.5 },
+    regionComposition: {
+      [picked[0]]: { Astrocyte: 0.9, Microglia: 0.1 },
+      [picked[1]]: { Astrocyte: 0.2, Microglia: 0.8 },
+    },
+    compositionResolution: 'donor-mix',
+    cellStats: { totalCount: 2000 },
+  });
+  drawOneFrame();
+
+  selectRegion(window, picked[0]);
+  const first = detailRows(window);
+  selectRegion(window, picked[1]);
+  const second = detailRows(window);
+
+  assert.notDeepEqual(
+    first.map((row) => `${row.label}=${row.value}`),
+    second.map((row) => `${row.label}=${row.value}`),
+    'two regions with different donor mixes must not show the same bars',
+  );
+  assert.equal(first[0].label, 'Astrocyte', 'the dominant class leads in the first region');
+  assert.equal(second[0].label, 'Microglia', 'and the other one leads in the second');
+  assert.match(
+    window.document.getElementById('detailDataStatus').textContent,
+    /per-region/i,
+    'the provenance line must say the breakdown is region-resolved',
+  );
+}
+
+// Without a per-region breakdown the old behaviour is still the honest one -- but it
+// has to be labelled as an average, not passed off as a regional measurement.
+function testLinkedScopeWithoutPerRegionDataSaysItIsAnAverage() {
+  const { window, drawOneFrame } = bootAtlas();
+  const [acronym] = someMappedAcronyms(window, 1);
+
+  applyExplorerScopeOfOneRegion(window, acronym);
+  drawOneFrame();
+  selectRegion(window, acronym);
+
+  assert.match(
+    window.document.getElementById('detailDataStatus').textContent,
+    /scope-level/i,
+    'a scope average must not claim to be region-resolved',
+  );
+}
+
+// First entry into the genes layer drops the envelope overlay because its fill
+// fights the expression cloud -- but only as a default the user can override.
+function testFirstGeneApplicationDefaultsEnvelopesOff() {
+  const { window } = bootAtlas();
+  const toggle = window.document.getElementById('envelopeToggle');
+  assert.ok(toggle, 'the drawer should carry the envelope toggle');
+  assert.equal(toggle.checked, true, 'envelopes start on outside the genes layer');
+  window.DigitalBrainAtlas.applyGeneValues(oneGene({}));
+  assert.equal(toggle.checked, false,
+    'the first gene application must default the envelope overlay off');
+}
+
+function testEnvelopeDefaultIsOneShot() {
+  const { window } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const toggle = window.document.getElementById('envelopeToggle');
+  atlas.applyGeneValues(oneGene({}));
+  assert.equal(toggle.checked, false);
+  // The user turns the envelopes back on; later gene applications must respect that.
+  toggle.checked = true;
+  toggle.dispatchEvent(new window.Event('change'));
+  atlas.applyGeneValues(oneGene({ A1BG: 1 }));
+  assert.equal(toggle.checked, true,
+    'once the user re-enables envelopes, later gene picks must not force them off');
+  atlas.clearGeneValues();
+  atlas.applyGeneValues(oneGene({}));
+  assert.equal(toggle.checked, true,
+    'clearing the genes must not re-arm the one-shot default');
+}
+
+// Reported bug: clearing the genes hid the gene legend but never emptied its
+// rows, so the removed genes were still listed the next time the layer opened.
+function testClearedGenesLeaveNoLegendRowsBehind() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  atlas.applyGeneValues(oneGene({ A1BG: 2.5 }));
+  drawOneFrame();
+  const rows = window.document.getElementById('legendGeneRows');
+  assert.equal(rows.childElementCount, 1, 'the selected gene is listed');
+
+  atlas.clearGeneValues();
+  drawOneFrame();
+  // Back on the cells layer the legend is hidden, but its rows must be empty too:
+  // re-entering the genes layer shows it before any new gene is applied.
+  window.document.querySelector('[data-layer="genes"]').click();
+  drawOneFrame();
+  assert.equal(rows.childElementCount, 0, 'no stale gene rows may survive the clear');
+}
+
+// The lock belongs to the on-screen gene layer: switching the top-level view to
+// the overview must hand the scope selects back, and returning must re-arm it.
+function testOverviewViewReleasesTheScopeLock() {
+  const { window, drawOneFrame } = bootAtlas();
+  window.DigitalBrainAtlas.applyGeneValues(oneGene({}));
+  drawOneFrame();
+  const select = window.document.getElementById('collectionSelect');
+  assert.equal(select.disabled, true, 'the gene layer locks the scope selects');
+
+  window.AtlasBridge.setAtlasViewVisible(false);
+  assert.equal(select.disabled, false, 'leaving for the overview releases them');
+
+  window.AtlasBridge.setAtlasViewVisible(true);
+  assert.equal(select.disabled, true, 'returning to the atlas re-arms the lock');
+}
+
 function main() {
   const cases = [
     ['testGeneLayerIsAcceptedByTheLayerWhitelist', testGeneLayerIsAcceptedByTheLayerWhitelist],
@@ -912,12 +1302,18 @@ function main() {
     ['testScopeFiltersAreDisabledInGeneLayer', testScopeFiltersAreDisabledInGeneLayer],
     ['testScopeLockMarksTheFilterRowAsATooltipHost', testScopeLockMarksTheFilterRowAsATooltipHost],
     ['testLeavingGeneLayerRestoresTheScopeFilters', testLeavingGeneLayerRestoresTheScopeFilters],
+    ['testOverviewViewReleasesTheScopeLock', testOverviewViewReleasesTheScopeLock],
     ['testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked', testLeavingGeneLayerKeepsAlreadyLockedFiltersLocked],
     ['testGeneLayerRestoresFiltersUnlockedByTheHost', testGeneLayerRestoresFiltersUnlockedByTheHost],
     ['testConnectivityChromeStaysHiddenInGeneLayer', testConnectivityChromeStaysHiddenInGeneLayer],
     ['testGeneLayerDetailShowsTheGeneNotConnectivity', testGeneLayerDetailShowsTheGeneNotConnectivity],
     ['testGeneLayerDetailListsCellClassValues', testGeneLayerDetailListsCellClassValues],
+    ['testEverySelectedGeneIsListedForTheRegion', testEverySelectedGeneIsListedForTheRegion],
+    ['testClickingAGeneRowAsksTheHostToPromoteIt', testClickingAGeneRowAsksTheHostToPromoteIt],
+    ['testARegionCarriedByAnotherGeneStaysReachable', testARegionCarriedByAnotherGeneStaysReachable],
+    ['testThePerClassSectionIsVisibleInTheGeneLayer', testThePerClassSectionIsVisibleInTheGeneLayer],
     ['testCellClassesWithoutDataSaySoInsteadOfZero', testCellClassesWithoutDataSaySoInsteadOfZero],
+    ['testEveryClassRowCarriesItsClassColour', testEveryClassRowCarriesItsClassColour],
     ['testDetailReportsTheSupportBehindTheValue', testDetailReportsTheSupportBehindTheValue],
     ['testARegionWithoutGeneDataSaysSo', testARegionWithoutGeneDataSaysSo],
     ['testDetailStatesWhenTheCellClassTierIsUnavailable', testDetailStatesWhenTheCellClassTierIsUnavailable],
@@ -938,6 +1334,13 @@ function main() {
     ['testTheDensityTicksFollowTheMetric', testTheDensityTicksFollowTheMetric],
     ['testTheMappingKeyShowsThreeConfidenceTiers', testTheMappingKeyShowsThreeConfidenceTiers],
     ['testLeavingTheGeneLayerHidesTheGenesLegend', testLeavingTheGeneLayerHidesTheGenesLegend],
+    ['testLinkedScopeCompositionFollowsTheSelectedRegion', testLinkedScopeCompositionFollowsTheSelectedRegion],
+    ['testLinkedScopeWithoutPerRegionDataSaysItIsAnAverage', testLinkedScopeWithoutPerRegionDataSaysItIsAnAverage],
+    ['testFirstGeneApplicationDefaultsEnvelopesOff', testFirstGeneApplicationDefaultsEnvelopesOff],
+    ['testEnvelopeDefaultIsOneShot', testEnvelopeDefaultIsOneShot],
+    ['testClearedGenesLeaveNoLegendRowsBehind', testClearedGenesLeaveNoLegendRowsBehind],
+    ['testTheAtlasAnnouncesItsSelection', testTheAtlasAnnouncesItsSelection],
+    ['testTheRegionCatalogueIsReadableByTheHost', testTheRegionCatalogueIsReadableByTheHost],
   ];
   cases.forEach(([name, fn]) => {
     fn();

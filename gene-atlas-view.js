@@ -23,6 +23,33 @@
         "#80ffdb",
     ];
 
+    // Search now matches metadata as well as symbols, so a broad query can hit
+    // thousands of genes. The list is capped and the remainder is reported rather than
+    // dropped silently; the cap is generous enough that a real prefix query is never
+    // truncated ("AB" -> 71 genes) but small enough to stay scrollable.
+    const MAX_RESULTS = 40;
+
+    // What to call the field a row was found by. Only shown when it is not the symbol,
+    // which is the one case that needs no explanation.
+    const MATCH_LABELS = {
+        ensembl: "id",
+        name: "name",
+        location: "locus",
+        class: "peaks in",
+    };
+
+    // Which aggregation rules the row offers, and which one it starts on.
+    //
+    // Only donor-balanced is on offer at the moment: it gives every donor equal say,
+    // whereas cell-weighted lets whichever study sequenced the most cells dominate the
+    // cross-study mean. Both paths stay intact end to end -- the data layer, the atlas
+    // payload and the density calibration all still carry both rules -- so putting the
+    // switch back is a matter of listing "cell_weighted" here again, not of
+    // re-implementing anything. A button for a rule that is not offered is hidden rather
+    // than removed from the markup, for the same reason.
+    const OFFERED_RULES = ["donor_balanced"];
+    const DEFAULT_RULE = "donor_balanced";
+
     function init(options) {
         const settings = options || {};
         const doc = settings.document || global.document;
@@ -32,6 +59,16 @@
         // the host can hand it over later through attachAtlas().
         let atlas = settings.atlas || global.DigitalBrainAtlas;
         if (!doc || !data) return null;
+
+        // The comparison panels below the 3D view. A separate module because it is a
+        // separate concern -- charts, not selection -- but it cannot own the selection, so
+        // this row pushes a snapshot on every change. Injectable (and skippable with
+        // `compare: null`) so the row can be tested without it.
+        const compare = Object.prototype.hasOwnProperty.call(settings, "compare")
+            ? settings.compare
+            : (global.GeneCompareView
+                ? global.GeneCompareView.init({ document: doc, window: host, data, atlas })
+                : null);
 
         const dom = {
             row: doc.getElementById("geneSearchRow"),
@@ -44,6 +81,8 @@
             cellTypeSection: doc.getElementById("geneCellTypeSection"),
             cellTypeList: doc.getElementById("geneCellTypeList"),
             cellTypeReset: doc.getElementById("geneCellTypeReset"),
+            cellTypeCount: doc.getElementById("geneCellTypeCount"),
+            valueNote: doc.getElementById("geneCellTypeValueNote"),
             detailNote: doc.getElementById("geneDetailNote"),
             dataNote: doc.getElementById("geneDataNote"),
         };
@@ -56,6 +95,13 @@
             // selection means no class contributes and nothing can be coloured.
             filter: null,
             layer: null,
+            // The query the dropdown is currently showing, so a search index that
+            // lands late cannot repopulate a list the user has already moved past.
+            query: "",
+            // Settles when the current query has been re-rendered against the search
+            // index (or that fetch has failed). Exposed as searchIndexReady() so callers
+            // and tests can wait for the second render instead of racing it.
+            metaReady: Promise.resolve(null),
             // init() on its own assumes the data is there; bootstrap() corrects this
             // once the index fetch settles.
             dataAvailable: true,
@@ -125,6 +171,9 @@
             atlas.applyGeneValues({
                 metric: data.metric(),
                 rule: data.rule(),
+                // Named so the atlas knows which gene its markers, legend range and
+                // detail headline belong to; without it the first chip spoke for all.
+                active: state.active,
                 scale,
                 genes: state.genes.map((symbol) => {
                     const values = valuesFor(symbol);
@@ -138,26 +187,35 @@
             });
         }
 
-        // Explicitly giving up the last gene is the one action that means "leave".
-        function teardown() {
-            if (atlas && typeof atlas.clearGeneValues === "function") atlas.clearGeneValues();
-        }
-
-        // What the atlas needs to fill its region detail panel for the active gene.
+        // What the atlas needs to fill its region detail panel. Every selected gene
+        // goes over, not just the active one: a region is where a multi-gene selection
+        // is actually compared, and the panel showing one number while the cloud showed
+        // six was the single-gene assumption outliving its layer.
+        //
+        // Per-class rows travel for the active gene only -- that is the one whose
+        // breakdown the panel draws, and 31 rows per gene would be paid for nothing.
+        //
         // Reads live state, so installing it once is enough: later metric, rule and
         // gene switches are picked up on the next call.
         function geneDetailSnapshot(acronym) {
-            const symbol = state.active;
-            if (!symbol) return null;
-            const raw = currentValues()[acronym];
-            const detailAvailable = canFilter(symbol);
+            if (!state.genes.length) return null;
             return {
-                symbol,
                 metric: data.metric(),
-                value: typeof raw === "number" && Number.isFinite(raw) ? raw : null,
-                support: data.regionSupport(symbol, acronym) || null,
-                detailAvailable,
-                rows: detailAvailable ? data.cellTypeDetail(symbol, acronym) : [],
+                rule: data.rule(),
+                active: state.active,
+                genes: state.genes.map((symbol) => {
+                    const raw = valuesFor(symbol)[acronym];
+                    const detailAvailable = canFilter(symbol);
+                    const isActive = symbol === state.active;
+                    return {
+                        symbol,
+                        colour: colourFor(symbol),
+                        value: typeof raw === "number" && Number.isFinite(raw) ? raw : null,
+                        support: data.regionSupport(symbol, acronym) || null,
+                        detailAvailable,
+                        rows: isActive && detailAvailable ? data.cellTypeDetail(symbol, acronym) : [],
+                    };
+                }),
             };
         }
 
@@ -170,6 +228,13 @@
         function attachAtlas(next) {
             atlas = next || atlas;
             installDetailProvider();
+            // The class palette comes from the atlas, so the rows only get their
+            // colours once it is here.
+            renderCellTypes();
+            // Same for the panels below, which additionally need the atlas's region
+            // catalogue to name anything.
+            if (compare && typeof compare.attachAtlas === "function") compare.attachAtlas(atlas);
+            refreshCompare();
             repaint();
             return atlas;
         }
@@ -204,6 +269,90 @@
             });
         }
 
+        // One result row. A bare symbol is not enough to choose between 19k genes that
+        // all look like acronyms: the HGNC name says what the gene is, the peak class
+        // says which cells carry it here, and the detail badge says whether the
+        // cell-class filter will even be available once it is picked.
+        //
+        // A row can also be here because the query matched its Ensembl id, its name, its
+        // cytoband or its peak class rather than its symbol. That has to be said out
+        // loud, or the row reads as an unrelated gene the search threw in.
+        //
+        // Every line beyond the symbol is optional: the search index may not have
+        // arrived yet, or the build may ship none at all.
+        function buildResultOption(match) {
+            const symbol = match.symbol;
+            const option = doc.createElement("button");
+            option.type = "button";
+            option.className = "gene-search-option";
+            option.dataset.gene = symbol;
+            option.setAttribute("role", "option");
+
+            const meta = (typeof data.searchMeta === "function" && data.searchMeta(symbol)) || null;
+
+            const head = doc.createElement("span");
+            head.className = "gene-option-head";
+            const label = doc.createElement("strong");
+            label.className = "gene-option-symbol";
+            label.textContent = symbol;
+            head.appendChild(label);
+            if (match.field && match.field !== "symbol") {
+                const why = doc.createElement("span");
+                why.className = "gene-option-why";
+                why.dataset.matchField = match.field;
+                why.textContent = `${MATCH_LABELS[match.field] || "matched"}: ${match.text}`;
+                head.appendChild(why);
+            }
+            if (meta && meta.peakClass) {
+                const peak = doc.createElement("span");
+                peak.className = "gene-option-peak";
+                peak.dataset.peakClass = meta.peakClass;
+                const dot = doc.createElement("i");
+                dot.style.background = classColour(meta.peakClass);
+                peak.appendChild(dot);
+                peak.appendChild(doc.createTextNode(meta.peakClass));
+                peak.title = `Highest ${
+                    data.metric() === "detection" ? "detection rate" : "mean expression"
+                } in ${meta.peakClass}`;
+                head.appendChild(peak);
+            }
+            option.appendChild(head);
+
+            if (meta && meta.name) {
+                const name = doc.createElement("span");
+                name.className = "gene-option-name";
+                name.textContent = meta.name;
+                option.appendChild(name);
+            }
+
+            if (meta) {
+                const facts = doc.createElement("span");
+                facts.className = "gene-option-facts";
+                const parts = [];
+                if (meta.ensembl) parts.push(meta.ensembl);
+                if (meta.location) parts.push(meta.location);
+                if (meta.biotype) parts.push(meta.biotype);
+                if (meta.regions) parts.push(`${meta.regions} regions`);
+                if (parts.length) {
+                    const text = doc.createElement("span");
+                    text.textContent = parts.join(" · ");
+                    facts.appendChild(text);
+                }
+                if (meta.detail) {
+                    // The one field that changes what you can do next, so it is a badge
+                    // rather than another item in the sentence.
+                    const badge = doc.createElement("span");
+                    badge.className = "gene-option-badge";
+                    badge.dataset.detailBadge = "";
+                    badge.textContent = "cell-type detail";
+                    facts.appendChild(badge);
+                }
+                if (facts.childElementCount) option.appendChild(facts);
+            }
+
+            return option;
+        }
+
         function renderResults(matches, query) {
             if (!dom.results) return;
             dom.results.textContent = "";
@@ -221,15 +370,19 @@
                 dom.results.appendChild(empty);
                 return;
             }
-            matches.forEach((symbol) => {
-                const option = doc.createElement("button");
-                option.type = "button";
-                option.className = "gene-search-option";
-                option.dataset.gene = symbol;
-                option.setAttribute("role", "option");
-                option.textContent = symbol;
-                dom.results.appendChild(option);
+            matches.slice(0, MAX_RESULTS).forEach((match) => {
+                dom.results.appendChild(buildResultOption(match));
             });
+            // Matching names as well as symbols means a broad query can hit thousands of
+            // genes. Rendering all of them is both slow and useless, and silently cutting
+            // the list is worse -- so say how much was cut and what to do about it.
+            if (matches.length > MAX_RESULTS) {
+                const more = doc.createElement("p");
+                more.className = "gene-search-more";
+                more.dataset.resultOverflow = "";
+                more.textContent = `Showing the ${MAX_RESULTS} closest of ${matches.length} matches — keep typing to narrow.`;
+                dom.results.appendChild(more);
+            }
         }
 
         // Cell-type filtering is computed from the detail tier, which only ships for
@@ -240,31 +393,196 @@
             return data.canFilterByCellType(symbol);
         }
 
+        // The atlas owns the class palette (curated for the baseline classes, derived
+        // for the rest), so the list asks for it rather than keeping a second copy that
+        // would drift from the canvas. Neutral grey until the atlas is attached.
+        function classColour(type) {
+            if (atlas && typeof atlas.cellTypeColour === "function") {
+                return atlas.cellTypeColour(type) || "#8ea6ad";
+            }
+            return "#8ea6ad";
+        }
+
+        // Same shape as the atlas detail panel: a rate reads as a percentage, an
+        // expression level as a number. Two decimals here, three in the detail panel,
+        // because this column is a ranking cue rather than the figure to quote.
+        function formatValue(value) {
+            if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+            return data.metric() === "detection"
+                ? `${Math.round(value * 100)}%`
+                : value.toFixed(2);
+        }
+
+        // "All classes" first, exactly as the cell-profiles list opens with "All cell
+        // types". It is the honest label for no filter -- the state the precomputed
+        // region table answers -- and gives the panel a one-click way back.
+        function buildAllRow(count) {
+            const row = doc.createElement("button");
+            row.type = "button";
+            row.className = "cell-type-button cell-type-all";
+            row.dataset.cellTypeAll = "";
+            row.classList.toggle("active", !state.filter);
+            row.setAttribute("aria-pressed", state.filter ? "false" : "true");
+
+            const dot = doc.createElement("span");
+            dot.className = "cell-type-dot multicolor";
+            row.appendChild(dot);
+
+            const name = doc.createElement("span");
+            name.textContent = "All cell types";
+            row.appendChild(name);
+
+            const meta = doc.createElement("small");
+            meta.textContent = `${count} classes`;
+            row.appendChild(meta);
+            return row;
+        }
+
+        // One class. Visually a cell-profiles pill, semantically a checkbox: the filter
+        // is a subset, so a radio-style button would misdescribe it and lose the
+        // keyboard and screen-reader behaviour that comes free with an input.
+        function buildClassRow(type, entry, peak, filterable) {
+            const row = doc.createElement("label");
+            row.className = "cell-type-button cell-type-check";
+            row.dataset.cellType = type;
+            row.style.setProperty("--class-colour", classColour(type));
+
+            const box = doc.createElement("input");
+            box.type = "checkbox";
+            box.dataset.cellTypeBox = type;
+            // No filter means every class contributes, so they all read as ticked.
+            box.checked = !state.filter || state.filter.indexOf(type) !== -1;
+            box.disabled = !filterable;
+            row.appendChild(box);
+
+            const dot = doc.createElement("span");
+            dot.className = "cell-type-dot";
+            dot.style.color = classColour(type);
+            row.appendChild(dot);
+
+            const name = doc.createElement("span");
+            name.className = "cell-type-name";
+            name.textContent = type;
+            row.appendChild(name);
+
+            const meta = doc.createElement("span");
+            meta.className = "cell-type-meta";
+            const value = doc.createElement("small");
+            value.dataset.cellTypeValue = type;
+            // Only the detail tier can speak per class. Without it the row states
+            // nothing rather than borrowing the mixed region value, which belongs to
+            // all classes at once.
+            value.textContent = filterable ? formatValue(entry && entry.value) : "";
+            meta.appendChild(value);
+            if (filterable) {
+                // Isolating one class is the gene layer's most common question ("is this
+                // microglial?"), and ticking 30 boxes off to ask it is not a workflow.
+                const solo = doc.createElement("button");
+                solo.type = "button";
+                solo.className = "cell-type-solo";
+                solo.dataset.cellTypeSolo = type;
+                solo.textContent = "only";
+                solo.title = `Show ${type} alone`;
+                meta.appendChild(solo);
+            }
+            row.appendChild(meta);
+
+            const bar = doc.createElement("span");
+            bar.className = "cell-type-bar";
+            const fill = doc.createElement("i");
+            // Relative to the strongest class, so the column ranks classes for this
+            // gene. An absolute scale would make most genes a row of empty bars.
+            const share = entry && peak > 0 ? Math.max(0.03, entry.value / peak) : 0;
+            fill.style.width = `${(share * 100).toFixed(1)}%`;
+            bar.appendChild(fill);
+            // A region-only gene has nothing to rank, so the track would be 31 empty
+            // grooves suggesting a measurement of zero.
+            if (filterable) row.appendChild(bar);
+
+            if (filterable && !entry) {
+                // Measured nowhere for this gene: ticking it can only remove regions, so
+                // say so instead of showing a confident 0.
+                row.classList.add("empty");
+                row.title = `No cells of this class carry data for ${state.active}`;
+            }
+            row.classList.toggle("active", box.checked);
+            row.classList.toggle("locked", !filterable);
+            return row;
+        }
+
         function renderCellTypes() {
             if (!dom.cellTypeList) return;
             const types = data.cellTypes();
             const filterable = canFilter(state.active);
+            const summary =
+                filterable && state.active && typeof data.cellTypeSummary === "function"
+                    ? data.cellTypeSummary(state.active)
+                    : {};
+            const peak = Object.keys(summary).reduce(
+                (max, type) => Math.max(max, summary[type].value),
+                0,
+            );
             dom.cellTypeList.textContent = "";
+            dom.cellTypeList.appendChild(buildAllRow(types.length));
             types.forEach((type) => {
-                const row = doc.createElement("label");
-                row.className = "cell-type-row";
-                row.dataset.cellType = type;
-
-                const box = doc.createElement("input");
-                box.type = "checkbox";
-                box.dataset.cellTypeBox = type;
-                // No filter means every class contributes, so they all read as ticked.
-                box.checked = !state.filter || state.filter.indexOf(type) !== -1;
-                box.disabled = !filterable;
-                row.appendChild(box);
-
-                const name = doc.createElement("span");
-                name.textContent = type;
-                row.appendChild(name);
-
-                dom.cellTypeList.appendChild(row);
+                dom.cellTypeList.appendChild(
+                    buildClassRow(type, summary[type], peak, filterable),
+                );
             });
+            syncSelectionCount();
+            syncValueNote(filterable);
             syncDetailNote(filterable);
+        }
+
+        // The host collapses this list to five rows, so the selection size cannot live
+        // inside it: with 31 classes the ticked ones are usually below the fold. The
+        // heading is the one part of the section that is always on screen.
+        function syncSelectionCount() {
+            if (!dom.cellTypeCount) return;
+            if (!state.filter) {
+                dom.cellTypeCount.hidden = true;
+                dom.cellTypeCount.textContent = "";
+                return;
+            }
+            dom.cellTypeCount.hidden = false;
+            dom.cellTypeCount.textContent = `${state.filter.length} of ${data.cellTypes().length}`;
+        }
+
+        // Ticking a box changes which classes are selected, not what each class is
+        // worth, so the rows are updated in place. Rebuilding them would drop the
+        // keyboard focus that just did the ticking.
+        function syncCellTypeStates() {
+            if (!dom.cellTypeList) return;
+            dom.cellTypeList.querySelectorAll("[data-cell-type-box]").forEach((box) => {
+                const ticked = !state.filter || state.filter.indexOf(box.dataset.cellTypeBox) !== -1;
+                box.checked = ticked;
+                const row = box.closest("[data-cell-type]");
+                if (row) row.classList.toggle("active", ticked);
+            });
+            const all = dom.cellTypeList.querySelector("[data-cell-type-all]");
+            if (all) {
+                all.classList.toggle("active", !state.filter);
+                all.setAttribute("aria-pressed", state.filter ? "false" : "true");
+            }
+            syncSelectionCount();
+        }
+
+        // The numbers are metric- and rule-dependent, and a bare column of figures
+        // invites the reader to guess which. Name them, and name the gene they belong
+        // to, or say why the column is empty.
+        function syncValueNote(filterable) {
+            if (!dom.valueNote) return;
+            if (!state.active || !filterable) {
+                dom.valueNote.hidden = true;
+                dom.valueNote.textContent = "";
+                return;
+            }
+            dom.valueNote.hidden = false;
+            dom.valueNote.textContent = `Values are ${state.active} across the whole brain per class (${
+                data.metric() === "detection" ? "detection rate" : "mean expression"
+            }, ${
+                data.rule() === "cell_weighted" ? "cell-weighted" : "donor-balanced"
+            }); bars are relative to the strongest class.`;
         }
 
         // A greyed-out control with no explanation reads as a broken build, so name
@@ -292,7 +610,11 @@
         // the most cells, so a large gap is a fact about sampling, not biology.
         function syncRuleNote() {
             if (!dom.ruleNote) return;
-            if (!state.active) {
+            // The note exists to explain a choice. With one rule on offer there is no
+            // choice to explain, and naming a rule the reader cannot select would only
+            // raise a question the row cannot answer. The comparison is skipped rather
+            // than computed and discarded, because it borrows the shared rule to make it.
+            if (!state.active || OFFERED_RULES.length < 2) {
                 dom.ruleNote.hidden = true;
                 return;
             }
@@ -333,11 +655,40 @@
             syncTabs(dom.metricTabs, "metric", data.metric());
             syncTabs(dom.ruleTabs, "rule", data.rule());
             syncRuleNote();
+            refreshCompare();
         }
 
+        // What the comparison panels need: the selection, its colours and the class
+        // filter. Everything else they read from the data layer themselves, so a metric or
+        // rule change needs no extra plumbing.
+        function refreshCompare() {
+            if (!compare || typeof compare.render !== "function") return;
+            compare.render({
+                genes: state.genes.map((symbol) => ({
+                    symbol,
+                    colour: colourFor(symbol),
+                })),
+                active: state.active,
+                filter: selectedCellTypes(),
+            });
+        }
+
+        // Rendered twice on the first query: once immediately from the payload index, so
+        // typing never waits on a request, and again once the search index lands and the
+        // id/name/locus tiers become available. An index that never arrives simply leaves
+        // the symbol-prefix list standing.
         function search(query) {
             const text = String(query || "").trim();
+            state.query = text;
             renderResults(text ? data.search(text) : [], text);
+            state.metaReady = text && typeof data.loadSearchIndex === "function"
+                ? data.loadSearchIndex().then((index) => {
+                    // Keystrokes outrun requests; only the list the box is still showing
+                    // may be replaced.
+                    if (index && state.query === text) renderResults(data.search(text), text);
+                    return index;
+                })
+                : Promise.resolve(null);
             return text;
         }
 
@@ -414,11 +765,11 @@
                 state.active = state.genes[Math.min(index, state.genes.length - 1)] || null;
             }
             render();
-            if (state.active) {
-                repaint();
-            } else {
-                teardown();
-            }
+            // An empty selection is not a request to leave the layer: repaint with
+            // no genes and let the overlay go empty, exactly like the metric and
+            // rule clicks above. Routing this through clearGeneValues() ejected the
+            // user to Cell profiles and left the removed gene in the legend.
+            repaint();
         }
 
         // An explicit list, possibly empty. Passing every known class collapses to
@@ -428,15 +779,20 @@
             const known = data.cellTypes();
             const wanted = (list || []).filter((type) => known.indexOf(type) !== -1);
             state.filter = wanted.length === known.length ? null : wanted;
-            renderCellTypes();
+            syncCellTypeStates();
             syncRuleNote();
+            // Ticking a class does not go through render() -- the rows are updated in
+            // place to keep focus -- so the panels have to be told separately, or they
+            // would keep showing the unfiltered numbers the map has just left behind.
+            refreshCompare();
             repaint();
         }
 
         function resetCellTypes() {
             state.filter = null;
-            renderCellTypes();
+            syncCellTypeStates();
             syncRuleNote();
+            refreshCompare();
             repaint();
         }
 
@@ -505,6 +861,21 @@
                     .map((node) => node.dataset.cellTypeBox);
                 setCellTypes(ticked);
             });
+            // "All classes" and "only" are clicks, not ticks. Both sit inside or beside a
+            // label, so the default label activation is cancelled: letting it through
+            // would toggle a box on top of the selection just set.
+            dom.cellTypeList.addEventListener("click", (event) => {
+                const solo = event.target.closest("[data-cell-type-solo]");
+                if (solo) {
+                    event.preventDefault();
+                    setCellTypes([solo.dataset.cellTypeSolo]);
+                    return;
+                }
+                if (event.target.closest("[data-cell-type-all]")) {
+                    event.preventDefault();
+                    resetCellTypes();
+                }
+            });
         }
         if (dom.cellTypeReset) {
             dom.cellTypeReset.addEventListener("click", () => resetCellTypes());
@@ -526,14 +897,37 @@
             syncSections();
         }
 
+        // Hides the buttons for rules that are not on offer and settles the data layer on
+        // the default. Driven by OFFERED_RULES rather than by markup so the decision lives
+        // in one place; the buttons stay in the DOM, wired and clickable, so nothing about
+        // the mechanism has to be rebuilt to offer them again.
+        function applyOfferedRules() {
+            if (dom.ruleTabs) {
+                dom.ruleTabs.querySelectorAll("[data-rule]").forEach((button) => {
+                    button.hidden = OFFERED_RULES.indexOf(button.dataset.rule) === -1;
+                });
+            }
+            if (OFFERED_RULES.indexOf(data.rule()) === -1) data.setRule(DEFAULT_RULE);
+        }
+
         if (host && typeof host.addEventListener === "function") {
             host.addEventListener("digitalbrain-atlas-layer", (event) => {
                 const detail = event && event.detail;
                 setLayer(detail ? detail.layer : null);
             });
+            // The detail panel lists every selected gene and lets the reader promote one
+            // of them. Only this module can grant that -- it owns the chips -- so the
+            // atlas asks by event and the answer travels back as a normal repaint.
+            host.addEventListener("digitalbrain-gene-select", (event) => {
+                const symbol = event && event.detail && event.detail.symbol;
+                if (symbol) setActive(symbol);
+            });
         }
 
         renderCellTypes();
+        // Before the first render, so the tabs and every value below them agree from the
+        // start rather than after a repaint.
+        applyOfferedRules();
         render();
         setLayer(null);
         installDetailProvider();
@@ -553,6 +947,7 @@
 
         return {
             search,
+            searchIndexReady: () => state.metaReady,
             addGene,
             removeGene,
             setActive,
@@ -565,6 +960,7 @@
             activeGene: () => state.active,
             colourFor,
             refreshCellTypes: renderCellTypes,
+            compare,
             setDataAvailable,
             attachAtlas,
         };

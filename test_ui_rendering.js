@@ -678,6 +678,24 @@ async function testAtlasListCollapseSettlesInsteadOfLoopingEveryFrame() {
   );
 }
 
+// The gene layer's class list is the same 31 rows as the composition one, so it has
+// to be registered with the same collapse pass rather than growing the settings
+// drawer to three screens. jsdom reports every box as 0px high, so the collapse
+// itself is not measurable here; what is checkable is that the list is wired in at
+// all -- a missing id in listIds silently leaves it uncollapsed.
+async function testTheGeneClassListIsWiredIntoTheCollapsePass() {
+  const window = await loadUiHarness();
+  await sleep(20);
+
+  const list = window.document.getElementById('geneCellTypeList');
+  assert.ok(list, 'the gene class list must exist in the drawer');
+  const toggle = list.nextElementSibling;
+  assert.ok(
+    toggle && toggle.classList.contains('atlas-list-toggle'),
+    'the collapse pass must own this list, like it owns the composition one',
+  );
+}
+
 // A 7px status indicator shipped with the default flex-shrink: 1 and min-width: auto
 // (0 for an empty element), so once the capsule was capped the dot joined the shrink
 // pool and was squeezed -- measured rendering at 4.1px, deformed into an ellipse by
@@ -837,6 +855,8 @@ async function main() {
   console.log('PASS testStatusDotIsNotInTheShrinkPool');
   await testAtlasListCollapseSettlesInsteadOfLoopingEveryFrame();
   console.log('PASS testAtlasListCollapseSettlesInsteadOfLoopingEveryFrame');
+  await testTheGeneClassListIsWiredIntoTheCollapsePass();
+  console.log('PASS testTheGeneClassListIsWiredIntoTheCollapsePass');
   await testStatusCapsuleScrollsInsteadOfWrappingTheHeaderRow();
   console.log('PASS testStatusCapsuleScrollsInsteadOfWrappingTheHeaderRow');
   await testTheScrollAnimatesTransformAndNotALayoutProperty();

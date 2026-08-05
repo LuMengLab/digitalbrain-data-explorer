@@ -108,12 +108,34 @@ const FIXTURE_INDEX = {
   detailGenes: ['GFAP'],
 };
 
+// The search index (see scripts/export_gene_search_index.py): columnar, so every list
+// is positional on the sorted symbols. GAD1 is annotated but has no cell-class detail.
+const FIXTURE_SEARCH_INDEX = {
+  version: 1,
+  ensemblPrefix: 'ENSG00000',
+  biotypes: ['protein-coding'],
+  classes: ['Astrocyte', 'MGE interneuron', 'Excitatory neuron'],
+  symbols: ['GAD1', 'GFAP', 'SNAP25'],
+  ensembl: ['128683', '131095', '132639'],
+  names: [
+    'glutamate decarboxylase 1',
+    'glial fibrillary acidic protein',
+    'synaptosome associated protein 25',
+  ],
+  locations: ['2q31.1', '17q21.31', '20p12.2'],
+  biotype: [0, 0, 0],
+  peak: [1, 0, 2],
+  regions: [163, 163, 163],
+  detail: [1],
+};
+
 const FILES = {
   'genes/GFAP.json': FIXTURE_GFAP,
   'genes/GFAP.detail.json': FIXTURE_GFAP_DETAIL,
   'genes/SNAP25.json': FIXTURE_SNAP25,
   'genes/GAD1.json': FIXTURE_GAD1,
   'index.json': FIXTURE_INDEX,
+  'search-index.json': FIXTURE_SEARCH_INDEX,
 };
 
 function runIn(context, file) {
@@ -128,11 +150,17 @@ function stubAtlas() {
   const calls = [];
   return {
     calls,
+    // The class palette belongs to the atlas, so the list has to ask for it. Fixed
+    // answers here make "the swatch is the atlas colour" assertable.
+    cellTypeColour(cellType) {
+      return { Astrocyte: '#f3c86f', Microglia: '#ef8e70' }[cellType] || '#9fb4bb';
+    },
     applyGeneValues(payload) {
       calls.push({
         kind: 'apply',
         metric: payload.metric,
         rule: payload.rule,
+        active: payload.active,
         scale: payload.scale,
         genes: payload.genes,
         // Convenience for the single-gene tests: the first gene in selection order
@@ -158,6 +186,13 @@ function stubAtlas() {
 
 function boot(options) {
   const settings = options || {};
+  // Both indexes are overridable so a test can widen the catalogue (the result cap only
+  // shows itself past 40 matches) without every other test paying for the extra genes.
+  const payloadIndex = settings.payloadIndex || FIXTURE_INDEX;
+  const files = Object.assign({}, FILES, {
+    'index.json': payloadIndex,
+    'search-index.json': settings.searchIndex || FIXTURE_SEARCH_INDEX,
+  });
   const html = fs
     .readFileSync(path.join(WEB_DIR, 'digitalneuron_main.html'), 'utf8')
     .replace(/<script[\s\S]*?<\/script>/g, '');
@@ -171,17 +206,21 @@ function boot(options) {
   const requests = [];
   window.fetch = (url) => {
     requests.push(url);
-    const key = Object.keys(FILES).find((name) => String(url).endsWith(name));
+    // Longest suffix wins: "search-index.json" also ends with "index.json", and a
+    // first-match lookup would quietly serve the payload index for both.
+    const key = Object.keys(files)
+      .filter((name) => String(url).endsWith(name))
+      .sort((a, b) => b.length - a.length)[0];
     if (!key || (settings.missing || []).indexOf(key) !== -1) {
       return Promise.resolve({ ok: false, status: 404 });
     }
-    return Promise.resolve({ ok: true, json: () => Promise.resolve(FILES[key]) });
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(files[key]) });
   };
 
   runIn(context, 'gene-atlas-data.js');
   const data = window.GeneAtlasData;
   data.reset();
-  data.ingestIndex(FIXTURE_INDEX);
+  data.ingestIndex(payloadIndex);
   if (settings.preload !== false) {
     data.ingestGene(FIXTURE_GFAP);
     data.ingestGeneDetail(FIXTURE_GFAP_DETAIL);
@@ -211,6 +250,298 @@ function resultLabels(document) {
   return [...document.querySelectorAll('#geneSearchResults [data-gene]')].map((node) =>
     node.dataset.gene,
   );
+}
+
+function classRow(document, type) {
+  return document.querySelector(`#geneCellTypeList [data-cell-type="${type}"]`);
+}
+
+function classValue(document, type) {
+  const node = document.querySelector(`#geneCellTypeList [data-cell-type-value="${type}"]`);
+  return node ? node.textContent : null;
+}
+
+// The panel's first job is to say which classes carry the gene; without a number per
+// row all 31 look equally plausible and the only way to find the carrier is to tick
+// them one at a time. Donor-balanced averages the regional readings instead of weighting
+// them by cell count, so Astrocyte is (1.9 + 1.266) / 2 = 1.58 (2 dp).
+function testEachClassRowShowsTheGeneValueForThatClass() {
+  const { document, view } = boot();
+  view.addGene('GFAP');
+  assert.equal(classValue(document, 'Astrocyte'), '1.58');
+  assert.equal(classValue(document, 'Microglia'), '0.40');
+  // The note names the metric and rule the column was computed under, because the
+  // same class reads differently across the four combinations.
+  const note = document.getElementById('geneCellTypeValueNote');
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent, /GFAP/);
+  assert.match(note.textContent, /mean expression/i);
+
+  document.querySelector('#geneMetricTabs [data-metric="detection"]').click();
+  // detection, donor-balanced: (0.81 + 0.42) / 2 = 0.615 -> 62%
+  assert.equal(classValue(document, 'Astrocyte'), '62%');
+}
+
+// Oligodendrocyte is in the vocabulary but carries no cells for GFAP. A 0 there would
+// claim the gene was measured in that class and found silent.
+function testAClassWithoutDataForTheGeneIsMarkedNotZeroed() {
+  const { document, view } = boot();
+  view.addGene('GFAP');
+  const row = classRow(document, 'Oligodendrocyte');
+  assert.equal(classValue(document, 'Oligodendrocyte'), '\u2014');
+  assert.ok(row.classList.contains('empty'), 'a class with no data must be marked as such');
+}
+
+// Reusing the cell-profiles pill only helps if the swatches agree with the canvas,
+// so the colour comes from the atlas rather than a second palette in the row.
+function testClassSwatchesUseTheAtlasPalette() {
+  const { document, view } = boot();
+  view.addGene('GFAP');
+  const dot = classRow(document, 'Astrocyte').querySelector('.cell-type-dot');
+  assert.equal(dot.style.color, 'rgb(243, 200, 111)', 'the swatch must be the atlas colour');
+}
+
+// The list opens on "All cell classes" exactly as the cell-profiles list opens on
+// "All cell types", and that row is the one click back to the unfiltered table.
+function testTheAllClassesRowClearsTheFilter() {
+  const { document, atlas, view } = boot();
+  view.addGene('GFAP');
+  view.setCellTypes(['Astrocyte']);
+  assert.equal(atlas.last().values.EC, 1.9);
+
+  const all = document.querySelector('#geneCellTypeList [data-cell-type-all]');
+  assert.ok(all, 'the list must offer an explicit all-classes row');
+  all.click();
+  assert.equal(view.selectedCellTypes(), null, 'the all row means no filter, not 31 ticks');
+  assert.equal(atlas.last().values.EC, 1.15, 'and the map goes back to the region table');
+  assert.ok(all.classList.contains('active'), 'the row shows that it is the current state');
+}
+
+// "Is this gene microglial?" is the layer's most common question and unticking 30
+// boxes is not a workflow. The button sits inside the label, so the default tick
+// must not fire on top of the selection it just set.
+function testTheOnlyButtonIsolatesOneClass() {
+  const { document, atlas, view } = boot();
+  view.addGene('GFAP');
+
+  document.querySelector('#geneCellTypeList [data-cell-type-solo="Microglia"]').click();
+  assert.deepEqual([...view.selectedCellTypes()], ['Microglia']);
+  assert.deepEqual(Object.keys(atlas.last().values), ['EC'], 'SWM has no microglia to show');
+  assert.equal(atlas.last().values.EC, 0.4);
+  assert.equal(
+    classRow(document, 'Astrocyte').classList.contains('active'),
+    false,
+    'the other rows must show that they are out',
+  );
+}
+
+// A tick changes which classes are selected, not what each is worth, so the rows are
+// updated in place: rebuilding them would drop the focus that just did the ticking.
+function testTickingAClassKeepsTheRowsAndFocusInPlace() {
+  const { document, view } = boot();
+  view.addGene('GFAP');
+  const box = document.querySelector('#geneCellTypeList [data-cell-type-box="Microglia"]');
+  box.focus();
+  box.checked = false;
+  box.dispatchEvent(new document.defaultView.Event('change', { bubbles: true }));
+
+  assert.deepEqual([...view.selectedCellTypes()], ['Astrocyte', 'Oligodendrocyte']);
+  assert.equal(
+    document.querySelector('#geneCellTypeList [data-cell-type-box="Microglia"]'),
+    box,
+    'the row must survive the tick rather than be rebuilt',
+  );
+  assert.equal(document.activeElement, box, 'the keyboard focus must stay where it was');
+  assert.equal(
+    classRow(document, 'Microglia').classList.contains('active'),
+    false,
+    'the pill must follow the box it contains',
+  );
+}
+
+// The host collapses this list to five rows, so with 31 classes the ticked ones are
+// usually below the fold. The heading is the only part that is always on screen.
+function testTheHeadingReportsHowManyClassesAreTicked() {
+  const { document, view } = boot();
+  view.addGene('GFAP');
+  const count = document.getElementById('geneCellTypeCount');
+  assert.equal(count.hidden, true, 'no filter needs no count; the all-classes row says it');
+
+  view.setCellTypes(['Astrocyte']);
+  assert.equal(count.hidden, false);
+  assert.match(count.textContent, /1 of 3/);
+
+  document.querySelector('#geneCellTypeList [data-cell-type-all]').click();
+  assert.equal(count.hidden, true, 'back to no filter, so back to no count');
+}
+
+// A dropdown of bare acronyms cannot be chosen from: 19k symbols all look alike.
+// The search index arrives after the list is already on screen, so the row is
+// rendered twice -- typing must never wait on a request.
+async function testResultRowsGainTheirMetadataWhenTheIndexArrives() {
+  const { document, view, requests } = boot();
+  view.search('GF');
+  // First pass, straight from the index: the symbol is there and nothing waited.
+  assert.deepEqual(resultLabels(document), ['GFAP']);
+
+  await view.searchIndexReady();
+  assert.ok(
+    requests.some((url) => String(url).endsWith('search-index.json')),
+    `the search index must be fetched, got ${JSON.stringify(requests)}`,
+  );
+
+  const option = document.querySelector('#geneSearchResults [data-gene="GFAP"]');
+  assert.match(option.textContent, /glial fibrillary acidic protein/, 'the HGNC name');
+  assert.match(option.textContent, /ENSG00000131095/, 'the Ensembl id');
+  assert.match(option.textContent, /17q21\.31/, 'the cytoband');
+  assert.match(option.textContent, /163 regions/, 'how much of the brain it covers');
+  assert.equal(
+    option.querySelector('[data-peak-class]').dataset.peakClass,
+    'Astrocyte',
+    'the class carrying it, which is the functional hint',
+  );
+  assert.ok(
+    option.querySelector('[data-detail-badge]'),
+    'GFAP ships a cell-class tier, and that decides what can be done after picking it',
+  );
+  assert.equal(
+    option.querySelector('[data-match-field]'),
+    null,
+    'a symbol match needs no explanation of why it is in the list',
+  );
+}
+
+// The badge is a promise about the next step, so it must not appear for the ~19.2k
+// genes whose Cell class filter will be greyed out.
+async function testOnlyGenesWithACellClassTierGetTheBadge() {
+  const { document, view } = boot();
+  view.search('GA');
+  await view.searchIndexReady();
+
+  const option = document.querySelector('#geneSearchResults [data-gene="GAD1"]');
+  assert.match(option.textContent, /glutamate decarboxylase 1/);
+  assert.equal(option.querySelector('[data-detail-badge]'), null,
+    'GAD1 is region-level only in this fixture');
+}
+
+// One request for the whole box, not per keystroke: matching names and ids crosses
+// every letter, so there is nothing to shard by and nothing to re-fetch.
+async function testTheSearchIndexIsFetchedOncePerSession() {
+  const { view, requests } = boot();
+  view.search('G');
+  await view.searchIndexReady();
+  view.search('GF');
+  await view.searchIndexReady();
+  view.search('SNAP');
+  await view.searchIndexReady();
+
+  assert.equal(
+    requests.filter((url) => String(url).endsWith('search-index.json')).length,
+    1,
+    'three queries across two letters must cost one request',
+  );
+}
+
+// An older export ships no search index at all. The dropdown must keep working with
+// the symbols it has, and must not re-request the missing file on every keystroke.
+async function testAMissingSearchIndexLeavesTheSymbolListStanding() {
+  const { document, view, requests } = boot({ missing: ['search-index.json'] });
+  view.search('SN');
+  await view.searchIndexReady();
+  assert.deepEqual(resultLabels(document), ['SNAP25'], 'the list still lists');
+
+  view.search('SNA');
+  await view.searchIndexReady();
+  assert.equal(
+    requests.filter((url) => String(url).endsWith('search-index.json')).length,
+    1,
+    'a known-missing index must not be asked for again',
+  );
+}
+
+// The point of the whole index: a gene is reachable by its Ensembl id and by its HGNC
+// name, not only by guessing its symbol. A row that did not match on its symbol has to
+// say what it did match, or it reads as an unrelated gene the search threw in.
+async function testGenesAreReachableByIdAndByName() {
+  const { document, view } = boot();
+
+  view.search('ENSG00000131095');
+  await view.searchIndexReady();
+  assert.deepEqual(resultLabels(document), ['GFAP'], 'the full Ensembl id finds the gene');
+  const byId = document.querySelector('#geneSearchResults [data-gene="GFAP"] [data-match-field]');
+  assert.ok(byId, 'an id match must explain itself');
+  assert.equal(byId.dataset.matchField, 'ensembl');
+  assert.match(byId.textContent, /ENSG00000131095/);
+
+  view.search('decarboxylase');
+  await view.searchIndexReady();
+  assert.deepEqual(resultLabels(document), ['GAD1'], 'the HGNC name finds the gene');
+  const byName = document.querySelector('#geneSearchResults [data-gene="GAD1"] [data-match-field]');
+  assert.equal(byName.dataset.matchField, 'name');
+  assert.match(byName.textContent, /glutamate decarboxylase 1/);
+}
+
+// The priority the whole ranking exists for: symbol matches first, then identifier
+// matches, and metadata matches last -- so widening the search never costs the user
+// the row they were actually typing towards.
+async function testSymbolMatchesAreListedBeforeMetadataMatches() {
+  const { document, view } = boot();
+  // "GA" is a prefix of GAD1 and appears inside no symbol; "protein" is in two names.
+  view.search('protein');
+  await view.searchIndexReady();
+  assert.deepEqual(
+    resultLabels(document),
+    ['GFAP', 'SNAP25'],
+    'a name-only query still lists, alphabetically within its tier',
+  );
+
+  // A query that hits one symbol and another gene's name: the symbol comes first.
+  view.search('GAD1');
+  await view.searchIndexReady();
+  assert.equal(resultLabels(document)[0], 'GAD1');
+}
+
+// Matching names as well as symbols means a broad query can hit thousands of genes.
+// Rendering all of them is useless and cutting them silently is worse.
+async function testALongResultListIsCappedAndSaysSo() {
+  // 60 genes whose names all contain "protein", so one query matches every one of them.
+  const symbols = Array.from({ length: 60 }, (_, i) => `PRO${String(i).padStart(3, '0')}`);
+  const { document, view } = boot({
+    payloadIndex: Object.assign({}, FIXTURE_INDEX, {
+      genes: Object.fromEntries(symbols.map((symbol) => [symbol, `genes/${symbol}.json`])),
+    }),
+    searchIndex: {
+      version: 1,
+      ensemblPrefix: 'ENSG00000',
+      biotypes: ['protein-coding'],
+      classes: ['Astrocyte'],
+      symbols,
+      ensembl: symbols.map((_, i) => String(100000 + i)),
+      names: symbols.map((_, i) => `some protein ${i}`),
+      locations: symbols.map(() => '1p36.33'),
+      biotype: symbols.map(() => 0),
+      peak: symbols.map(() => 0),
+      regions: symbols.map(() => 163),
+      detail: [],
+    },
+    preload: false,
+  });
+
+  view.search('protein');
+  await view.searchIndexReady();
+
+  const rows = resultLabels(document);
+  assert.equal(rows.length, 40, 'the list is capped');
+  assert.deepEqual(rows, symbols.slice(0, 40), 'and it keeps the top of the ranking');
+  const overflow = document.querySelector('#geneSearchResults [data-result-overflow]');
+  assert.ok(overflow, 'the cut must be reported, not silent');
+  assert.match(overflow.textContent, /40/, 'how many are shown');
+  assert.match(overflow.textContent, /60/, 'out of how many');
+
+  // A real prefix query is well under the cap, so it is never truncated.
+  view.search('PRO001');
+  await view.searchIndexReady();
+  assert.equal(document.querySelector('#geneSearchResults [data-result-overflow]'), null);
 }
 
 function testSearchListsMatchingSymbols() {
@@ -330,43 +661,78 @@ function testConfiguringTheLayerWithNoGeneKeepsIt() {
   assert.equal(atlas.last().kind, 'apply', 'and for the cell-class filter');
 }
 
-function testRemovingTheLastChipLeavesTheGeneLayer() {
+// Reported bug: removing the last chip tore the layer down (clearGeneValues ->
+// selectDataLayer "cells") and the gene legend kept the removed gene's rows. An
+// empty selection is a legitimate state of the layer, not a request to leave it
+// -- the same rule the metric and rule tabs already follow.
+function testRemovingTheLastChipKeepsTheGeneLayer() {
   const { document, atlas, view } = boot();
   view.addGene('GFAP');
   view.removeGene('GFAP');
 
   assert.deepEqual(chipLabels(document), []);
   assert.equal(view.activeGene(), null);
-  assert.equal(atlas.last().kind, 'clear', 'an empty selection leaves the gene layer');
+  const last = atlas.last();
+  assert.equal(last.kind, 'apply', 'an empty selection repaints, it does not leave');
+  assert.equal(last.genes.length, 0, 'the repaint carries no genes, so the overlay empties');
+  assert.equal(atlas.calls.every((call) => call.kind !== 'clear'), true,
+    'tearing the layer down is never part of chip removal');
 }
 
 function testMetricSwitchRepaintsWithDetectionValues() {
   const { document, atlas, view } = boot();
   view.addGene('GFAP');
-  assert.equal(atlas.last().values.EC, 0.637);
+  assert.equal(atlas.last().values.EC, 1.15);
 
   document.querySelector('#geneMetricTabs [data-metric="detection"]').click();
   const painted = atlas.last();
   assert.equal(painted.metric, 'detection');
-  assert.equal(painted.values.EC, 0.297, 'the 3D values follow the metric');
+  assert.equal(painted.values.EC, 0.455, 'the 3D values follow the metric');
 }
 
 function testRuleSwitchRepaintsWithTheOtherAggregation() {
   const { document, atlas, view } = boot();
   view.addGene('GFAP');
-  assert.equal(atlas.last().values.EC, 0.637, 'cell-weighted is the default');
+  assert.equal(atlas.last().values.EC, 1.15, 'donor-balanced is the default');
 
-  document.querySelector('#geneRuleTabs [data-rule="donor_balanced"]').click();
-  assert.equal(atlas.last().values.EC, 1.15, 'the 3D values follow the rule');
+  // Cell-weighted is not offered in the UI any more, but the button stays wired and the
+  // whole path behind it intact -- so driving it must still repaint with that rule.
+  document.querySelector('#geneRuleTabs [data-rule="cell_weighted"]').click();
+  assert.equal(atlas.last().values.EC, 0.637, 'the 3D values follow the rule');
+}
+
+// Only donor-balanced is on offer: it gives every donor equal say, whereas
+// cell-weighted lets the largest study dominate a cross-study mean. The control for the
+// rule that is not offered is hidden rather than deleted, and the note that compares the
+// two goes with it -- naming a rule the reader cannot pick only raises a question.
+function testOnlyTheOfferedAggregationRuleIsShown() {
+  const { document, atlas, view } = boot();
+  const cellWeighted = document.querySelector('#geneRuleTabs [data-rule="cell_weighted"]');
+  const donorBalanced = document.querySelector('#geneRuleTabs [data-rule="donor_balanced"]');
+
+  assert.equal(cellWeighted.hidden, true, 'the cell-weighted button is withheld');
+  assert.equal(donorBalanced.hidden, false, 'donor-balanced is the one on offer');
+  assert.ok(donorBalanced.classList.contains('active'), 'and it is the one in effect');
+
+  // GFAP's two rules differ by 44% in this fixture, which used to raise the note.
+  view.addGene('GFAP');
+  assert.equal(atlas.last().rule, 'donor_balanced', 'the atlas is told which rule it drew');
+  assert.equal(document.getElementById('geneRuleNote').hidden, true,
+    'with one rule on offer there is no choice left to explain');
+
+  // And the per-class caption still names the rule actually in force, so the numbers
+  // below it are never unattributed.
+  view.setCellTypes(['Astrocyte']);
+  assert.match(document.getElementById('geneCellTypeValueNote').textContent, /donor-balanced/);
 }
 
 function testCellTypeFilterRepaintsTheThreeDeeView() {
   const { document, atlas, view } = boot();
   view.addGene('GFAP');
-  assert.equal(atlas.last().values.EC, 0.637);
+  assert.equal(atlas.last().values.EC, 1.15);
 
   // Astrocyte only: EC must fall back to the astrocyte value, not the mixed one.
-  // A filter that only redrew the detail panel would leave 0.637 here.
+  // A filter that only redrew the detail panel would leave 1.15 here.
   view.setCellTypes(['Astrocyte']);
   const painted = atlas.last();
   assert.equal(painted.values.EC, 1.9, 'unticking a cell class must recolour the atlas');
@@ -413,7 +779,7 @@ function testResetRestoresTheUnfilteredView() {
   assert.equal(atlas.last().values.EC, 1.9);
 
   document.getElementById('geneCellTypeReset').click();
-  assert.equal(atlas.last().values.EC, 0.637, 'reset goes back to the unfiltered table');
+  assert.equal(atlas.last().values.EC, 1.15, 'reset goes back to the unfiltered table');
   // null, not []: an empty array is an explicit "no class selected".
   assert.equal(view.selectedCellTypes(), null, 'reset clears the filter');
 }
@@ -424,7 +790,7 @@ function testTickingEveryCellClassMatchesTheUnfilteredTable() {
   view.setCellTypes(data.cellTypes());
   // All ticked is the same view as no filter, and the precomputed region table is
   // the authoritative one, so the two must not disagree.
-  assert.equal(atlas.last().values.EC, 0.637);
+  assert.equal(atlas.last().values.EC, 1.15);
 }
 
 function testSearchRowIsOnlyVisibleInTheGeneLayer() {
@@ -615,6 +981,12 @@ async function testAFailedGeneFetchIsReportedAndLeavesNoChip() {
 
 // --- region detail provider ---
 
+// The snapshot always describes the whole selection, so every test here reads the
+// entry it cares about rather than a bare top-level value.
+function entryFor(snapshot, symbol) {
+  return [...snapshot.genes].find((gene) => gene.symbol === symbol);
+}
+
 // The atlas cannot reach the gene payloads, so the view hands it a lookup. Without
 // this the detail panel would have nothing to show when a region is clicked.
 async function testTheViewInstallsAGeneDetailProviderOnTheAtlas() {
@@ -629,13 +1001,65 @@ async function testTheViewInstallsAGeneDetailProviderOnTheAtlas() {
   assert.equal(installed.length, 1, 'the provider is installed once');
 
   const snapshot = installed[0]('EC');
-  assert.equal(snapshot.symbol, 'GFAP');
+  assert.equal(snapshot.active, 'GFAP');
   assert.equal(snapshot.metric, data.metric());
-  assert.equal(snapshot.detailAvailable, true);
-  assert.equal(snapshot.value, 0.637, 'the region value under the active rule');
-  assert.equal(snapshot.support.donors, 43);
-  const astro = snapshot.rows.find((row) => row.cellType === 'Astrocyte');
+  const gfap = entryFor(snapshot, 'GFAP');
+  assert.equal(gfap.detailAvailable, true);
+  assert.equal(gfap.value, 1.15, 'the region value under the active rule');
+  assert.equal(gfap.support.donors, 43);
+  const astro = gfap.rows.find((row) => row.cellType === 'Astrocyte');
   assert.equal(astro.mean, 1.9);
+}
+
+// The point of the panel in a multi-gene selection: one region, every gene's value,
+// each with the chip colour it is drawn with. Per-class rows travel for the active
+// gene only -- 31 rows per gene would be paid for and never rendered.
+async function testTheSnapshotCarriesEverySelectedGeneWithItsChipColour() {
+  const installed = [];
+  const { view } = boot();
+  view.attachAtlas({
+    applyGeneValues: () => ({}),
+    clearGeneValues: () => ({}),
+    setGeneDetailProvider: (fn) => installed.push(fn),
+  });
+  await view.addGene('GFAP');
+  await view.addGene('SNAP25');
+
+  const snapshot = installed[0]('EC');
+  assert.deepEqual([...snapshot.genes].map((gene) => gene.symbol), ['GFAP', 'SNAP25'],
+    'chip order, which is also the cloud order');
+  assert.equal(snapshot.active, 'SNAP25', 'the last one added is the active one');
+  assert.equal(entryFor(snapshot, 'GFAP').value, 1.15);
+  assert.equal(entryFor(snapshot, 'SNAP25').value, 3.1);
+  assert.equal(entryFor(snapshot, 'GFAP').colour, view.colourFor('GFAP'),
+    'the panel row and the cloud must use one colour');
+  assert.equal(entryFor(snapshot, 'GFAP').rows.length, 0,
+    'GFAP is no longer active, so its per-class rows are not paid for');
+}
+
+// The panel lists every gene and lets the reader promote one. Only this module can
+// grant that, so it has to answer the atlas's request.
+async function testAGeneSelectRequestFromTheAtlasSwitchesTheActiveGene() {
+  const { window, atlas, view } = boot();
+  await view.addGene('GFAP');
+  await view.addGene('SNAP25');
+  assert.equal(view.activeGene(), 'SNAP25');
+
+  window.dispatchEvent(
+    new window.CustomEvent('digitalbrain-gene-select', { detail: { symbol: 'GFAP' } }),
+  );
+  assert.equal(view.activeGene(), 'GFAP', 'the request must move the active gene');
+  assert.equal(atlas.last().active, 'GFAP', 'and the repaint must tell the atlas');
+}
+
+// The atlas needs the active symbol to know which gene its markers, legend range and
+// headline speak for; without it the first chip silently spoke for all of them.
+function testThePaintedPayloadNamesTheActiveGene() {
+  const { atlas, view } = boot();
+  view.addGene('GFAP');
+  assert.equal(atlas.last().active, 'GFAP');
+  view.addGene('SNAP25');
+  assert.equal(atlas.last().active, 'SNAP25');
 }
 
 // The panel must reflect the metric and rule the map is drawn with, otherwise the
@@ -652,10 +1076,10 @@ async function testTheProviderFollowsTheActiveMetricAndRule() {
   const provider = installed[0];
 
   view.setRule('donor_balanced');
-  assert.equal(provider('EC').value, 1.15, 'the other aggregation');
+  assert.equal(entryFor(provider('EC'), 'GFAP').value, 1.15, 'the other aggregation');
 
   view.setMetric('detection');
-  assert.equal(provider('EC').value, 0.455);
+  assert.equal(entryFor(provider('EC'), 'GFAP').value, 0.455);
   assert.equal(provider('EC').metric, 'detection');
 }
 
@@ -669,10 +1093,10 @@ async function testTheProviderReportsAMissingDetailTier() {
   });
   await view.addGene('SNAP25');
 
-  const snapshot = installed[0]('EC');
-  assert.equal(snapshot.detailAvailable, false, 'SNAP25 is region-level only');
-  assert.equal(snapshot.rows.length, 0, 'no per-class rows to show');
-  assert.equal(snapshot.value, 3.1, 'but the region value is still there');
+  const snap = entryFor(installed[0]('EC'), 'SNAP25');
+  assert.equal(snap.detailAvailable, false, 'SNAP25 is region-level only');
+  assert.equal(snap.rows.length, 0, 'no per-class rows to show');
+  assert.equal(snap.value, 3.1, 'but the region value is still there');
 }
 
 async function testTheProviderReturnsNoDataForAnUncoveredRegion() {
@@ -686,10 +1110,10 @@ async function testTheProviderReturnsNoDataForAnUncoveredRegion() {
   await view.addGene('GFAP');
 
   // GFAP has no data in Pn: the value must be absent, never 0.
-  const snapshot = installed[0]('Pn');
-  assert.equal(snapshot.value, null);
-  assert.equal(snapshot.support, null);
-  assert.equal(snapshot.rows.length, 0);
+  const gfap = entryFor(installed[0]('Pn'), 'GFAP');
+  assert.equal(gfap.value, null);
+  assert.equal(gfap.support, null);
+  assert.equal(gfap.rows.length, 0);
 }
 
 function testEverySelectedGeneReachesTheAtlasInOrder() {
@@ -743,10 +1167,10 @@ function testThePaintedCalibrationFollowsTheRuleAndMetric() {
   // the wrong pair would mislabel the range without any visible symptom.
   const { document, atlas, view } = boot();
   view.addGene('GFAP');
-  assert.equal(atlas.last().scale.reference, 3.5091, 'cell-weighted/mean is the default');
+  assert.equal(atlas.last().scale.reference, 2.9077, 'donor-balanced/mean is the default');
 
-  document.querySelector('#geneRuleTabs [data-rule="donor_balanced"]').click();
-  assert.equal(atlas.last().scale.reference, 2.9077, 'the calibration must follow the rule');
+  document.querySelector('#geneRuleTabs [data-rule="cell_weighted"]').click();
+  assert.equal(atlas.last().scale.reference, 3.5091, 'the calibration must follow the rule');
 
   document.querySelector('#geneMetricTabs [data-metric="detection"]').click();
   assert.equal(atlas.last().scale.reference, 1,
@@ -756,6 +1180,13 @@ function testThePaintedCalibrationFollowsTheRuleAndMetric() {
 async function main() {
   const cases = [
     ['testSearchListsMatchingSymbols', testSearchListsMatchingSymbols],
+    ['testResultRowsGainTheirMetadataWhenTheIndexArrives', testResultRowsGainTheirMetadataWhenTheIndexArrives],
+    ['testOnlyGenesWithACellClassTierGetTheBadge', testOnlyGenesWithACellClassTierGetTheBadge],
+    ['testTheSearchIndexIsFetchedOncePerSession', testTheSearchIndexIsFetchedOncePerSession],
+    ['testAMissingSearchIndexLeavesTheSymbolListStanding', testAMissingSearchIndexLeavesTheSymbolListStanding],
+    ['testGenesAreReachableByIdAndByName', testGenesAreReachableByIdAndByName],
+    ['testSymbolMatchesAreListedBeforeMetadataMatches', testSymbolMatchesAreListedBeforeMetadataMatches],
+    ['testALongResultListIsCappedAndSaysSo', testALongResultListIsCappedAndSaysSo],
     ['testSearchMissRendersAnExplicitEmptyState', testSearchMissRendersAnExplicitEmptyState],
     ['testSelectingAResultAddsAChipAndPaints', testSelectingAResultAddsAChipAndPaints],
     ['testTheSameGeneIsNotAddedTwice', testTheSameGeneIsNotAddedTwice],
@@ -768,15 +1199,23 @@ async function main() {
     ['testEachGeneCarriesItsChipColour', testEachGeneCarriesItsChipColour],
     ['testGeneSupportTravelsWithEachGene', testGeneSupportTravelsWithEachGene],
     ['testThePaintedCalibrationFollowsTheRuleAndMetric', testThePaintedCalibrationFollowsTheRuleAndMetric],
-    ['testRemovingTheLastChipLeavesTheGeneLayer', testRemovingTheLastChipLeavesTheGeneLayer],
+    ['testRemovingTheLastChipKeepsTheGeneLayer', testRemovingTheLastChipKeepsTheGeneLayer],
     ['testMetricSwitchRepaintsWithDetectionValues', testMetricSwitchRepaintsWithDetectionValues],
     ['testRuleSwitchRepaintsWithTheOtherAggregation', testRuleSwitchRepaintsWithTheOtherAggregation],
+    ['testOnlyTheOfferedAggregationRuleIsShown', testOnlyTheOfferedAggregationRuleIsShown],
     ['testCellTypeFilterRepaintsTheThreeDeeView', testCellTypeFilterRepaintsTheThreeDeeView],
     ['testCellTypeFilterWithNoDataDropsTheRegion', testCellTypeFilterWithNoDataDropsTheRegion],
     ['testUntickingEveryCellClassLeavesNothingToColour', testUntickingEveryCellClassLeavesNothingToColour],
     ['testResetRestoresTheUnfilteredView', testResetRestoresTheUnfilteredView],
     ['testTickingEveryCellClassMatchesTheUnfilteredTable', testTickingEveryCellClassMatchesTheUnfilteredTable],
     ['testCellTypeListUsesTheThirtyOneClassVocabulary', testCellTypeListUsesTheThirtyOneClassVocabulary],
+    ['testEachClassRowShowsTheGeneValueForThatClass', testEachClassRowShowsTheGeneValueForThatClass],
+    ['testAClassWithoutDataForTheGeneIsMarkedNotZeroed', testAClassWithoutDataForTheGeneIsMarkedNotZeroed],
+    ['testClassSwatchesUseTheAtlasPalette', testClassSwatchesUseTheAtlasPalette],
+    ['testTheAllClassesRowClearsTheFilter', testTheAllClassesRowClearsTheFilter],
+    ['testTheOnlyButtonIsolatesOneClass', testTheOnlyButtonIsolatesOneClass],
+    ['testTickingAClassKeepsTheRowsAndFocusInPlace', testTickingAClassKeepsTheRowsAndFocusInPlace],
+    ['testTheHeadingReportsHowManyClassesAreTicked', testTheHeadingReportsHowManyClassesAreTicked],
     ['testSearchRowIsOnlyVisibleInTheGeneLayer', testSearchRowIsOnlyVisibleInTheGeneLayer],
     ['testBootstrapLoadsTheIndexAndFillsTheCellClasses', testBootstrapLoadsTheIndexAndFillsTheCellClasses],
     ['testBootstrapWithoutAGeneExportSaysSo', testBootstrapWithoutAGeneExportSaysSo],
@@ -792,6 +1231,9 @@ async function main() {
     ['testTheProviderFollowsTheActiveMetricAndRule', testTheProviderFollowsTheActiveMetricAndRule],
     ['testTheProviderReportsAMissingDetailTier', testTheProviderReportsAMissingDetailTier],
     ['testTheProviderReturnsNoDataForAnUncoveredRegion', testTheProviderReturnsNoDataForAnUncoveredRegion],
+    ['testTheSnapshotCarriesEverySelectedGeneWithItsChipColour', testTheSnapshotCarriesEverySelectedGeneWithItsChipColour],
+    ['testAGeneSelectRequestFromTheAtlasSwitchesTheActiveGene', testAGeneSelectRequestFromTheAtlasSwitchesTheActiveGene],
+    ['testThePaintedPayloadNamesTheActiveGene', testThePaintedPayloadNamesTheActiveGene],
   ];
   for (const [name, fn] of cases) {
     await fn();

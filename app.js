@@ -284,7 +284,9 @@ function initializeAtlasListCollapse() {
     }
 
     const VISIBLE = 5;
-    const listIds = ['cellTypeList', 'legendKey', 'compositionBars'];
+    // geneCellTypeList is the gene layer's own class list: same 31-row problem as the
+    // composition one, so it gets the same collapse rather than a second mechanism.
+    const listIds = ['cellTypeList', 'geneCellTypeList', 'legendKey', 'compositionBars'];
     const toggles = new Map();
     let scheduled = false;
 

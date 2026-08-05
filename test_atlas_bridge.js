@@ -62,6 +62,75 @@ function testBuildPayload() {
 
   assert.equal(payload.cellStats.totalCount, 10);
   assert.equal(payload.totalCells, 157);
+
+  // No donor records in this scope, so there is nothing to resolve per region and
+  // the payload has to say so rather than imply a regional measurement.
+  assert.deepEqual(payload.regionComposition, {});
+  assert.equal(payload.compositionResolution, 'scope');
+}
+
+// The source carries two marginals per donor and no joint matrix, which is why the
+// atlas used to repeat one scope average across every parcel. Most donors sampled a
+// single region, so mixing donors per region recovers a real per-region breakdown.
+function testPerRegionCompositionFromTheDonorMix() {
+  const { api } = loadModule('atlas-bridge.js');
+
+  const donors = [
+    // Single-region donor: its class profile *is* A23's profile.
+    { cell_type_count: { Astrocyte: 90, Microglia: 10 }, brod_count: { A23: 100 } },
+    // Single-region donor for a different region, with the opposite profile.
+    { cell_type_count: { Astrocyte: 10, Microglia: 90 }, brod_count: { EC: 100 } },
+    // Multi-region donor: contributes its profile to both, weighted by cells there.
+    { cell_type_count: { Astrocyte: 50, Microglia: 50 }, brod_count: { A23: 100, EC: 300 } },
+    // No class counts at all: cannot contribute a profile, must not divide by zero.
+    { cell_type_count: {}, brod_count: { A23: 500 } },
+  ];
+  const scope = {
+    scopeKey: 'collection',
+    scopeLabel: 'Collection One',
+    brodCounts: { A23: 200, EC: 400 },
+    cellTypeCounts: { Astrocyte: 150, Microglia: 150 },
+    donors,
+    metrics: { cells: 600 },
+  };
+  const payload = JSON.parse(JSON.stringify(api.buildPayload(scope, {})));
+
+  assert.equal(payload.compositionResolution, 'donor-mix');
+  const a23 = payload.regionComposition.A23;
+  const ec = payload.regionComposition.EC;
+  assert.ok(a23 && ec, 'both sampled regions should get a breakdown');
+
+  // A23: 100 cells at 90/10 plus 100 cells at 50/50 -> 70/30.
+  assert.equal(Math.round(a23.Astrocyte * 100), 70);
+  assert.equal(Math.round(a23.Microglia * 100), 30);
+  // EC: 100 cells at 10/90 plus 300 cells at 50/50 -> 40/60.
+  assert.equal(Math.round(ec.Astrocyte * 100), 40);
+  assert.equal(Math.round(ec.Microglia * 100), 60);
+
+  [a23, ec].forEach((fractions) => {
+    const sum = Object.values(fractions).reduce((total, value) => total + value, 0);
+    assert.ok(Math.abs(sum - 1) < 1e-9, 'each region breakdown normalizes to 1');
+  });
+
+  // The scope marginal is still sent as the fallback for regions the mix cannot reach.
+  assert.equal(Math.round(payload.composition.Astrocyte * 100), 50);
+}
+
+// A region nobody sampled must be absent from the map, not present with zeros: the
+// atlas reads an absent key as "fall back to the scope average".
+function testUnsampledRegionsAreAbsentNotZeroed() {
+  const { api } = loadModule('atlas-bridge.js');
+  // Re-home the cross-realm results before comparing, as elsewhere in this file.
+  const mixed = JSON.parse(JSON.stringify(api.buildRegionComposition([
+    { cell_type_count: { Astrocyte: 5 }, brod_count: { A23: 10, EC: 0 } },
+  ])));
+
+  assert.deepEqual(Object.keys(mixed.regionComposition), ['A23']);
+  assert.equal(mixed.resolved, 1);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(api.buildRegionComposition(undefined))),
+    { regionComposition: {}, resolved: 0 },
+  );
 }
 
 function testEmptyScope() {
@@ -76,6 +145,8 @@ function testEmptyScope() {
   assert.deepEqual(payload.regionCells, {});
   assert.deepEqual(payload.cellTypes, []);
   assert.deepEqual(payload.composition, {});
+  assert.deepEqual(payload.regionComposition, {});
+  assert.equal(payload.compositionResolution, 'scope');
   assert.equal(payload.cellStats.totalCount, 0);
 }
 
@@ -112,6 +183,10 @@ function testSyncCallsAtlas() {
 function main() {
   testBuildPayload();
   console.log('PASS testBuildPayload');
+  testPerRegionCompositionFromTheDonorMix();
+  console.log('PASS testPerRegionCompositionFromTheDonorMix');
+  testUnsampledRegionsAreAbsentNotZeroed();
+  console.log('PASS testUnsampledRegionsAreAbsentNotZeroed');
   testEmptyScope();
   console.log('PASS testEmptyScope');
   testSyncCallsAtlas();

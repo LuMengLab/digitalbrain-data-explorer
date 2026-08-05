@@ -190,6 +190,12 @@
     legendKey: document.getElementById("legendKey"),
     legendTitle: document.getElementById("legendTitle"),
     legendRange: document.getElementById("legendRange"),
+    legendGenes: document.getElementById("legendGenes"),
+    legendGenesMetric: document.getElementById("legendGenesMetric"),
+    legendGeneRows: document.getElementById("legendGeneRows"),
+    legendDensityRamp: document.getElementById("legendDensityRamp"),
+    legendDensityTicks: document.getElementById("legendDensityTicks"),
+    legendDensityCaption: document.getElementById("legendDensityCaption"),
     visibleCount: document.getElementById("visibleCount"),
     cellTypeCount: document.getElementById("cellTypeCount"),
     secondaryCountLabel: document.getElementById("secondaryCountLabel"),
@@ -1518,6 +1524,7 @@
         state.geneMetric === "detection"
           ? "0–100%"
           : `${min.toFixed(2)}–${max.toFixed(2)}`;
+      renderGeneLegend();
     } else if (!allMode) {
       dom.legendRange.textContent = `${Math.round(min * 100)}–${Math.round(max * 100)}%`;
     }
@@ -1969,6 +1976,12 @@
     dom.abundanceFilterSection.hidden = !cellLayer;
     dom.connectivitySection.hidden = markerLayer;
     dom.legendConnectivity.hidden = markerLayer;
+    // The genes layer needs a legend of its own. legendRange has always carried the
+    // computed range, but it sits inside legendSingle, which syncCellTypeControls() hides
+    // outside the cells layer -- so the range was correct, written, and unseeable. This
+    // belongs here rather than there because it is layer-driven, like legendConnectivity,
+    // and syncCellTypeControls() is only reached on the cells path anyway.
+    dom.legendGenes.hidden = !geneLayer;
     dom.visualKey.hidden = !markerLayer;
     dom.mappingKey.hidden = !markerLayer;
     dom.compositionSection.hidden = !cellLayer;
@@ -2526,6 +2539,102 @@
         row.addEventListener("click", () => selectCellType(cellType));
         dom.compositionBars.append(row);
       });
+  }
+
+  // Round values worth a tick on the density ramp. mean is an expression level, whereas
+  // detection is a ratio, so they need different landmarks.
+  const GENE_DENSITY_TICKS = {
+    mean: [0.05, 0.1, 0.5, 1, 2],
+    detection: [0.1, 0.25, 0.5, 0.75],
+  };
+  const GENE_DENSITY_STEPS = 6;
+
+  function formatGeneLegendValue(value) {
+    return state.geneMetric === "detection"
+      ? `${Math.round(value * 100)}%`
+      : value.toFixed(2);
+  }
+
+  function renderGeneLegend() {
+    const scale = state.geneScale;
+    if (!scale) return;
+    const genes = state.genes || [];
+    dom.legendGenesMetric.textContent =
+      state.geneMetric === "detection" ? "Detection rate" : "Mean expression";
+    dom.legendDensityCaption.textContent =
+      state.geneRule === "donor_balanced"
+        ? "Lit density · donor-balanced"
+        : "Lit density · cell-weighted";
+
+    dom.legendGeneRows.replaceChildren();
+    genes.forEach((gene) => {
+      const row = document.createElement("div");
+      row.className = "legend-gene-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "legend-gene-swatch";
+      swatch.style.background = gene.colour;
+      row.append(swatch);
+
+      const symbol = document.createElement("span");
+      symbol.className = "legend-gene-symbol";
+      symbol.textContent = gene.symbol;
+      row.append(symbol);
+
+      // Where this gene's top value sits on the shared 0-reference axis. Cross-gene
+      // comparison splits the channels deliberately: pattern by density, magnitude by
+      // this marker and the numbers, so the two never fight over one channel.
+      const abundance = document.createElement("span");
+      abundance.className = "legend-gene-abundance";
+      abundance.style.color = gene.colour;
+      const marker = document.createElement("i");
+      const reach = gene.max === null
+        ? 0
+        : Math.min(100, (gene.max / scale.reference) * 100);
+      marker.style.left = `${reach}%`;
+      abundance.append(marker);
+      abundance.title = gene.max === null
+        ? "no data"
+        : `peak ${formatGeneLegendValue(gene.max)} of ${formatGeneLegendValue(scale.reference)} corpus reference`;
+      row.append(abundance);
+
+      const range = document.createElement("span");
+      range.className = "legend-gene-range";
+      range.textContent = gene.min === null
+        ? "no data"
+        : `${formatGeneLegendValue(gene.min)}–${formatGeneLegendValue(gene.max)}`;
+      row.append(range);
+
+      dom.legendGeneRows.append(row);
+    });
+
+    if (!dom.legendDensityRamp.childElementCount) {
+      for (let step = 0; step < GENE_DENSITY_STEPS; step += 1) {
+        const cell = document.createElement("span");
+        cell.className = "legend-density-step";
+        const spacing = 8 - (step * 5.6) / (GENE_DENSITY_STEPS - 1);
+        cell.style.backgroundSize = `${spacing.toFixed(2)}px ${spacing.toFixed(2)}px`;
+        dom.legendDensityRamp.append(cell);
+      }
+    }
+
+    // Ticks are placed by the very same normalise() the cloud draws with, so the legend
+    // cannot drift from the picture. A piecewise scale has no one-line explanation.
+    dom.legendDensityTicks.replaceChildren();
+    GENE_DENSITY_TICKS[state.geneMetric].forEach((value) => {
+      if (value > scale.reference) return;
+      const tick = document.createElement("span");
+      tick.className = "legend-density-tick";
+      tick.dataset.value = String(value);
+      tick.style.left = `${GenePointCloud.normalise(value, scale) * 100}%`;
+      tick.textContent = formatGeneLegendValue(value);
+      dom.legendDensityTicks.append(tick);
+    });
+    const fold = document.createElement("span");
+    fold.className = "legend-density-breakpoint";
+    fold.style.left = `${GenePointCloud.D_LOW * 100}%`;
+    fold.title = `slope folds at ${formatGeneLegendValue(scale.breakpoint)}`;
+    dom.legendDensityTicks.append(fold);
   }
 
   function findRegionAt(x, y) {
@@ -3280,15 +3389,20 @@
       state.genes = (payload.genes || []).map((gene) => {
         const values = gene.values || {};
         const support = gene.support || {};
-        return {
-          symbol: gene.symbol,
-          colour: gene.colour,
-          values,
-          support,
-          byLabel: GenePointCloud.aggregateByLabel(
-            { values, support }, labelToRegions, anatomy.labels.length,
-          ),
-        };
+        const byLabel = GenePointCloud.aggregateByLabel(
+          { values, support }, labelToRegions, anatomy.labels.length,
+        );
+        // Measured on the merged label values, which is what the cloud draws, so the
+        // legend row and the summary describe the same numbers the viewer is looking at.
+        let min = null;
+        let max = null;
+        byLabel.hasValue.forEach((present, labelIndex) => {
+          if (!present) return;
+          const value = byLabel.values[labelIndex];
+          if (min === null || value < min) min = value;
+          if (max === null || value > max) max = value;
+        });
+        return { symbol: gene.symbol, colour: gene.colour, values, support, byLabel, min, max };
       });
       selectDataLayer("genes");
       return this.geneSummary();
@@ -3337,17 +3451,12 @@
         // One entry per gene, in the order the host gave them. min/max are measured on
         // the aggregated label values, which is what the cloud actually draws, so a
         // legend row describes the same numbers the viewer is looking at.
-        genes: (state.genes || []).map((gene) => {
-          let min = null;
-          let max = null;
-          gene.byLabel.hasValue.forEach((present, labelIndex) => {
-            if (!present) return;
-            const value = gene.byLabel.values[labelIndex];
-            if (min === null || value < min) min = value;
-            if (max === null || value > max) max = value;
-          });
-          return { symbol: gene.symbol, colour: gene.colour, min, max };
-        }),
+        genes: (state.genes || []).map((gene) => ({
+          symbol: gene.symbol,
+          colour: gene.colour,
+          min: gene.min,
+          max: gene.max,
+        })),
       };
     },
 

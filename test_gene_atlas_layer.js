@@ -779,6 +779,127 @@ function testTheHitGridIsIgnoredOutsideTheGeneLayer() {
     'and no hit may be reported from a stale grid');
 }
 
+function testTheGeneRangeWasComputedButInvisible() {
+  // Regression guard for the bug this legend fixes. drawRegions() has always written the
+  // range into legendRange, but that element sits inside legendSingle, which
+  // syncCellTypeControls() hides outside the cells layer. Computed, written, unseeable.
+  // Assert the content still lands AND that a visible element now carries it.
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const acronym = someMappedAcronyms(window, 1)[0];
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
+  drawOneFrame();
+
+  const document = window.document;
+  // The precise statement of the bug: the content is right, and it is sitting in a
+  // container the genes layer hides. Asserting legendSingle.hidden alone would not
+  // discriminate, since it is also hidden at boot by the all-cell-types mode.
+  assert.match(document.getElementById('legendRange').textContent, /2\.68/,
+    'the range was always computed and written');
+  assert.equal(document.getElementById('legendSingle').hidden, true,
+    'but into a container the genes layer hides, which is why it was never seen');
+  assert.equal(document.getElementById('legendGenes').hidden, false,
+    'the genes legend must be the visible home for it');
+  assert.match(document.getElementById('legendGenes').textContent, /2\.68/,
+    'and it must actually show the number');
+}
+
+function testGeneLayerShowsALegendRowPerGene() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 2);
+  atlas.applyGeneValues({
+    metric: 'mean',
+    rule: 'cell_weighted',
+    scale: SCALE,
+    genes: [
+      { symbol: 'AIF1', colour: '#61ddb2', values: { [picked[0]]: 0.4 }, support: { [picked[0]]: 1000 } },
+      { symbol: 'GFAP', colour: '#f0a36a', values: { [picked[1]]: 1.2 }, support: { [picked[1]]: 2000 } },
+    ],
+  });
+  drawOneFrame();
+
+  const legend = window.document.getElementById('legendGenes');
+  assert.equal(legend.hidden, false, 'the genes legend must be visible in the genes layer');
+  const rows = legend.querySelectorAll('.legend-gene-row');
+  assert.equal(rows.length, 2, 'one row per gene');
+  assert.match(rows[0].textContent, /AIF1/, 'the first row names the first gene');
+  assert.match(rows[1].textContent, /GFAP/, 'the second row names the second gene');
+  // Cross-gene comparison splits the channels: pattern by density, magnitude by the
+  // abundance marker and the numbers. Each row must carry its own measured range.
+  assert.match(rows[0].textContent, /0\.40/, "the row must show the gene's own range");
+  assert.match(rows[1].textContent, /1\.20/, 'and each gene keeps its own, not a shared one');
+  assert.equal(rows[0].querySelector('.legend-gene-swatch').style.background, 'rgb(97, 221, 178)',
+    'the swatch must use the colour the host gave, so chips and cloud agree');
+  assert.ok(rows[0].querySelector('.legend-gene-abundance'),
+    'each row needs an abundance marker on the shared 0-reference axis');
+}
+
+function testDensityRampTicksSitWhereTheCalibrationPutsThem() {
+  // A piecewise scale cannot be explained by a formula line, so it has to be shown with
+  // ticks. Their positions must come from the same normalise() the cloud draws with,
+  // otherwise the legend quietly lies about the density.
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const acronym = someMappedAcronyms(window, 1)[0];
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
+  drawOneFrame();
+
+  const ticks = [...window.document.querySelectorAll('#legendGenes .legend-density-tick')];
+  assert.ok(ticks.length >= 4, 'the ramp needs several round-value ticks');
+  ticks.forEach((tick) => {
+    const value = Number(tick.dataset.value);
+    const expected = window.GenePointCloud.normalise(value, SCALE) * 100;
+    const placed = Number.parseFloat(tick.style.left);
+    assert.ok(Math.abs(placed - expected) < 0.01,
+      `tick ${value} sits at ${placed}% but the calibration puts it at ${expected}%`);
+  });
+  assert.ok(window.document.querySelector('#legendGenes .legend-density-breakpoint'),
+    'the breakpoint needs a divider: the slope deliberately folds there');
+}
+
+function testTheDensityTicksFollowTheMetric() {
+  // detection is a ratio, so its round values are percentages, not expression levels.
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const acronym = someMappedAcronyms(window, 1)[0];
+  atlas.applyGeneValues(oneGene({ [acronym]: 0.42 }, { metric: 'detection' }));
+  drawOneFrame();
+  const labels = [...window.document.querySelectorAll('#legendGenes .legend-density-tick')]
+    .map((tick) => tick.textContent);
+  assert.ok(labels.some((label) => label.includes('%')),
+    'detection ticks must be labelled as percentages');
+}
+
+function testTheMappingKeyShowsThreeConfidenceTiers() {
+  // Point size is the confidence channel now, so a two-entry line/dash key no longer
+  // describes what is on screen.
+  const { window } = bootAtlas();
+  const entries = [...window.document.querySelectorAll('#mappingKey span')];
+  assert.equal(entries.length, 3, 'three tiers are drawn, so three must be explained');
+  assert.ok(window.document.querySelector('#mappingKey .exact'), 'exact anatomy tier');
+  assert.ok(window.document.querySelector('#mappingKey .coarse'), 'coarse ontology proxy tier');
+  assert.ok(window.document.querySelector('#mappingKey .proxy'), 'curated gyral proxy tier');
+}
+
+function testLeavingTheGeneLayerHidesTheGenesLegend() {
+  const { window, drawOneFrame } = bootAtlas();
+  const atlas = window.DigitalBrainAtlas;
+  const acronym = someMappedAcronyms(window, 1)[0];
+  atlas.applyGeneValues(oneGene({ [acronym]: 2.68 }));
+  drawOneFrame();
+  assert.equal(window.document.getElementById('legendGenes').hidden, false);
+
+  atlas.clearGeneValues();
+  drawOneFrame();
+  assert.equal(window.document.getElementById('legendGenes').hidden, true,
+    'the genes legend must go away with the layer');
+  // Which cells legend returns depends on the cell-type mode, and the boot default is
+  // all cell types, so legendAll is the one that must come back here.
+  assert.equal(window.document.getElementById('legendAll').hidden, false,
+    'and the cells legend must come back');
+}
+
 function main() {
   const cases = [
     ['testGeneLayerIsAcceptedByTheLayerWhitelist', testGeneLayerIsAcceptedByTheLayerWhitelist],
@@ -811,6 +932,12 @@ function main() {
     ['testGeneCloudIsHitTestableAcrossItsWholeExtent', testGeneCloudIsHitTestableAcrossItsWholeExtent],
     ['testEachGeneIsIdentifiedAtItsOwnOffset', testEachGeneIsIdentifiedAtItsOwnOffset],
     ['testTheHitGridIsIgnoredOutsideTheGeneLayer', testTheHitGridIsIgnoredOutsideTheGeneLayer],
+    ['testTheGeneRangeWasComputedButInvisible', testTheGeneRangeWasComputedButInvisible],
+    ['testGeneLayerShowsALegendRowPerGene', testGeneLayerShowsALegendRowPerGene],
+    ['testDensityRampTicksSitWhereTheCalibrationPutsThem', testDensityRampTicksSitWhereTheCalibrationPutsThem],
+    ['testTheDensityTicksFollowTheMetric', testTheDensityTicksFollowTheMetric],
+    ['testTheMappingKeyShowsThreeConfidenceTiers', testTheMappingKeyShowsThreeConfidenceTiers],
+    ['testLeavingTheGeneLayerHidesTheGenesLegend', testLeavingTheGeneLayerHidesTheGenesLegend],
   ];
   cases.forEach(([name, fn]) => {
     fn();

@@ -757,6 +757,105 @@
     });
   }
 
+  // Point size encodes how trustworthy the region-to-label mapping is, so a viewer can
+  // tell a direct ontology match from a curated gyral stand-in. A label claimed at more
+  // than one confidence takes the most conservative of them (only label 51, HTHma).
+  const GENE_POINT_SIZES = {
+    recoverable_exact_or_union: 1.9,
+    coarse_ontology_proxy: 1.6,
+    curated_gyral_proxy: 1.4,
+  };
+  const GENE_POINT_SIZE_ORDER = [
+    "recoverable_exact_or_union",
+    "coarse_ontology_proxy",
+    "curated_gyral_proxy",
+  ];
+
+  const genePointSizeByLabel = (() => {
+    const sizes = new Float64Array(anatomy.labels.length).fill(GENE_POINT_SIZES.curated_gyral_proxy);
+    const worst = new Int8Array(anatomy.labels.length).fill(-1);
+    Object.values(anatomy.regionMappings).forEach((mapping) => {
+      const rank = GENE_POINT_SIZE_ORDER.indexOf(mapping.status);
+      if (rank < 0) return;
+      (mapping.labelIndices || []).forEach((labelIndex) => {
+        if (rank > worst[labelIndex]) {
+          worst[labelIndex] = rank;
+          sizes[labelIndex] = GENE_POINT_SIZES[mapping.status];
+        }
+      });
+    });
+    return sizes;
+  })();
+
+  // Fisher-Yates over 14k points is far too costly to redo every frame, and the
+  // permutation is a pure function of the group and label anyway.
+  const genePermutations = new Map();
+  function genePermutationFor(groupKey, labelIndex, size) {
+    const key = `${groupKey}:${labelIndex}`;
+    let order = genePermutations.get(key);
+    if (!order || order.length !== size) {
+      // Offset the seed per group so the two groups scatter independently.
+      order = GenePointCloud.permutationFor(
+        groupKey === "boundary" ? labelIndex + anatomy.labels.length : labelIndex,
+        size,
+      );
+      genePermutations.set(key, order);
+    }
+    return order;
+  }
+
+  function drawGenePointGroups(pointGroups, groupKey) {
+    const genes = state.genes;
+    const geneCount = genes.length;
+    ctx.save();
+    for (let labelIndex = 0; labelIndex < pointGroups.length; labelIndex += 1) {
+      const points = pointGroups[labelIndex];
+      if (!points.length) continue;
+      const order = genePermutationFor(groupKey, labelIndex, points.length);
+      const baseSize = genePointSizeByLabel[labelIndex];
+      for (let geneIndex = 0; geneIndex < geneCount; geneIndex += 1) {
+        const gene = genes[geneIndex];
+        if (!gene.byLabel.hasValue[labelIndex]) continue;
+        const lit = GenePointCloud.litIndices(
+          order, geneIndex, geneCount, gene.byLabel.values[labelIndex], state.geneScale,
+        );
+        if (!lit.length) continue;
+        // Offset direction fans the genes apart; the radius rides the perspective so it
+        // stays one physical quantity rather than one screen quantity.
+        const angle = (2 * Math.PI * geneIndex) / geneCount;
+        const offsetX = Math.cos(angle) * GENE_OFFSET_RADIUS;
+        const offsetY = Math.sin(angle) * GENE_OFFSET_RADIUS;
+        ctx.fillStyle = gene.colour;
+        ctx.globalAlpha = 0.85;
+        for (const pointIndex of lit) {
+          const projected = project(points[pointIndex]);
+          const size = Math.max(0.9, baseSize * projected.perspective);
+          // Deterministic sub-pixel jitter breaks up the stripes the voxel lattice
+          // would otherwise print; keyed on the point so it never shimmers.
+          const jitter = geneJitter(labelIndex, pointIndex, geneIndex);
+          ctx.fillRect(
+            projected.x + (offsetX + jitter.x) * projected.perspective - size / 2,
+            projected.y + (offsetY + jitter.y) * projected.perspective - size / 2,
+            size,
+            size,
+          );
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  const GENE_OFFSET_RADIUS = 2;
+
+  function geneJitter(labelIndex, pointIndex, geneIndex) {
+    const seed = (labelIndex * 92837111) ^ (pointIndex * 689287499) ^ (geneIndex * 283923481);
+    const mixed = Math.imul(seed ^ (seed >>> 15), 2246822519) >>> 0;
+    return {
+      x: ((mixed & 0xffff) / 0xffff - 0.5),
+      y: (((mixed >>> 16) & 0xffff) / 0xffff - 0.5),
+    };
+  }
+
   function drawAtlasPointGroups(pointGroups, boundaryLayer = false) {
     const styles = atlasLabelStyles(boundaryLayer);
     ctx.save();
@@ -895,8 +994,18 @@
   }
 
   function drawAtlasAnatomy() {
-    drawAtlasPointGroups(atlasOuterPointGroups);
-    if (state.showContours) drawAtlasPointGroups(atlasBoundaryPointGroups, true);
+    const geneMode = state.dataLayer === "genes" && Boolean(state.genes && state.genes.length);
+    if (geneMode) {
+      // Both groups, unconditionally. The boundary group holds 56% of the voxels and is
+      // the only substrate for 26 of the 90 claimed labels, so in the genes layer it is
+      // data rather than contour decoration -- gating it on state.showContours would
+      // make those genes vanish silently.
+      drawGenePointGroups(atlasOuterPointGroups, "outer");
+      drawGenePointGroups(atlasBoundaryPointGroups, "boundary");
+    } else {
+      drawAtlasPointGroups(atlasOuterPointGroups);
+      if (state.showContours) drawAtlasPointGroups(atlasBoundaryPointGroups, true);
+    }
     if (state.showContours && state.anatomyStyle === "boundaries") {
       drawAtlasParcelEnvelopes();
     }

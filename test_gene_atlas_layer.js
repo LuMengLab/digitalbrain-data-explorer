@@ -63,14 +63,15 @@ function stubContext() {
   };
 }
 
-function bootAtlas() {
+function bootAtlas(options) {
+  const settings = options || {};
   const html = fs
     .readFileSync(path.join(WEB_DIR, 'digitalneuron_main.html'), 'utf8')
     .replace(/<script[\s\S]*?<\/script>/g, '');
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
   const { window } = dom;
 
-  window.HTMLCanvasElement.prototype.getContext = () => stubContext();
+  window.HTMLCanvasElement.prototype.getContext = settings.context || (() => stubContext());
   // jsdom exposes no structuredClone; the atlas uses it to deep-copy the catalogue.
   window.structuredClone = (value) => JSON.parse(JSON.stringify(value));
   // Neither structuredClone nor ResizeObserver exist in jsdom; the observer only
@@ -633,6 +634,92 @@ function testApplyGeneValuesAcceptsSeveralGenes() {
   assert.doesNotThrow(drawOneFrame);
 }
 
+// Counts the point-cloud writes: the atlas draws voxels with fillRect and markers with
+// arc/fill, so fillRect alone isolates the cloud.
+function bootCountingVoxels() {
+  const drawn = [];
+  const booted = bootAtlas({
+    context: () => {
+      const stub = stubContext();
+      stub.fillRect = () => drawn.push(1);
+      return stub;
+    },
+  });
+  return { ...booted, drawn };
+}
+
+function testGeneCloudLightsMorePointsForHigherValues() {
+  const { window, drawOneFrame, drawn } = bootCountingVoxels();
+  const atlas = window.DigitalBrainAtlas;
+  const acronym = someMappedAcronyms(window, 1)[0];
+  const paint = (value) => {
+    atlas.applyGeneValues(oneGene({ [acronym]: value }));
+    drawn.length = 0;
+    drawOneFrame();
+    return drawn.length;
+  };
+  assert.ok(paint(1.5) > paint(0.05), 'a higher value must light more voxels');
+}
+
+function testGeneCloudIgnoresTheContourToggle() {
+  // 26 of the 90 claimed labels have no outer points at all, and 25 DigitalBrain regions
+  // live entirely on those labels. If the boundary group stayed governed by
+  // state.showContours, a gene expressed in one of them would draw nothing at all the
+  // moment that cosmetic flag went false. In the genes layer the boundary group is the
+  // data substrate -- it holds 56% of the voxels -- not contour decoration.
+  const { window, drawOneFrame, drawn } = bootCountingVoxels();
+  const atlas = window.DigitalBrainAtlas;
+  const anatomy = window.ALLEN_3D_ATLAS;
+
+  const outerCounts = new Map();
+  for (let index = 0; index < anatomy.outerPoints.length; index += 4) {
+    const label = anatomy.outerPoints[index + 3];
+    outerCounts.set(label, (outerCounts.get(label) || 0) + 1);
+  }
+  const boundaryOnly = Object.keys(anatomy.regionMappings).find((acronym) => {
+    const labels = anatomy.regionMappings[acronym].labelIndices || [];
+    return labels.length && labels.every((label) => !outerCounts.get(label));
+  });
+  assert.ok(boundaryOnly, 'this test needs a region whose labels carry only boundary points');
+
+  atlas.applyGeneValues(oneGene({ [boundaryOnly]: 1.5 }));
+  drawn.length = 0;
+  drawOneFrame();
+  assert.ok(drawn.length > 0,
+    `${boundaryOnly} lives only on boundary points, so it must still light up`);
+}
+
+function testGeneCloudPointCountGrowsSublinearly() {
+  // One gene against four: total lit points must grow by about sqrt(4) = 2x, not 4x.
+  const { window, drawOneFrame, drawn } = bootCountingVoxels();
+  const atlas = window.DigitalBrainAtlas;
+  const picked = someMappedAcronyms(window, 1)[0];
+  const saturated = SCALE.reference;
+
+  const paintGenes = (count) => {
+    atlas.applyGeneValues({
+      metric: 'mean',
+      rule: 'cell_weighted',
+      scale: SCALE,
+      genes: Array.from({ length: count }, (unused, index) => ({
+        symbol: `G${index}`,
+        colour: '#4cc9f0',
+        values: { [picked]: saturated },
+        support: { [picked]: 1000 },
+      })),
+    });
+    drawn.length = 0;
+    drawOneFrame();
+    return drawn.length;
+  };
+
+  const one = paintGenes(1);
+  const four = paintGenes(4);
+  const ratio = four / one;
+  assert.ok(ratio > 1.6 && ratio < 2.4,
+    `four saturated genes must cost about sqrt(4) = 2x one, got ${ratio.toFixed(2)}x`);
+}
+
 function main() {
   const cases = [
     ['testGeneLayerIsAcceptedByTheLayerWhitelist', testGeneLayerIsAcceptedByTheLayerWhitelist],
@@ -659,6 +746,9 @@ function main() {
     ['testApplyGeneValuesRejectsAMissingCalibration', testApplyGeneValuesRejectsAMissingCalibration],
     ['testApplyGeneValuesRejectsATruncatedCalibration', testApplyGeneValuesRejectsATruncatedCalibration],
     ['testApplyGeneValuesAcceptsSeveralGenes', testApplyGeneValuesAcceptsSeveralGenes],
+    ['testGeneCloudLightsMorePointsForHigherValues', testGeneCloudLightsMorePointsForHigherValues],
+    ['testGeneCloudIgnoresTheContourToggle', testGeneCloudIgnoresTheContourToggle],
+    ['testGeneCloudPointCountGrowsSublinearly', testGeneCloudPointCountGrowsSublinearly],
   ];
   cases.forEach(([name, fn]) => {
     fn();

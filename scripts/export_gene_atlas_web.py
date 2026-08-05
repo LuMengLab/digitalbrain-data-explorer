@@ -249,7 +249,8 @@ def export(
     return written
 
 
-def write_index_file(out_dir, symbols, *, detail_genes=None, scope=None, cell_types=None) -> dict:
+def write_index_file(out_dir, symbols, *, detail_genes=None, scope=None, cell_types=None,
+                    density_scale=None) -> dict:
     """写 index.json：scope 披露 + 指标/规则 + 词表 + 基因→文件映射 + 详情子集。"""
     if scope is None:
         scope = default_scope()
@@ -260,6 +261,7 @@ def write_index_file(out_dir, symbols, *, detail_genes=None, scope=None, cell_ty
         "scope": scope,
         "metrics": METRICS,
         "rules": list(stage_b.RULES),
+        "densityScale": density_scale or {},
         "cellTypes": list(cell_types),
         "genes": {symbol: f"genes/{symbol}.json" for symbol in sorted(symbols)},
         "detailGenes": sorted(detail_genes) if detail_genes else [],

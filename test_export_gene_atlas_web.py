@@ -232,3 +232,39 @@ def test_cli_defaults_to_the_shipped_detail_list_not_every_gene(tmp_path, monkey
     assert detail is not None, "CLI must pin an explicit detail subset"
     assert isinstance(detail, set)
     assert "GFAP" in detail
+
+
+def test_index_carries_the_density_calibration(tmp_path):
+    """守卫「数据换代后静默沿用旧标定」：那种错不报错，只是所有密度静静地偏一点。
+
+    四组 `规则 × 指标` 必须齐全——两个规则的 mean 参照差 21%，缺一组就会在切换
+    规则时错标量程。
+    """
+    module = load_module()
+    scale = {
+        "breakpoint": 0.5201,
+        "reference": 3.5091,
+        "lowKnots": [0, 0.0008, 0.003, 0.0085, 0.0196, 0.0372, 0.0602,
+                     0.0889, 0.1253, 0.1729, 0.2382, 0.3379, 0.5201],
+    }
+    density_scale = {
+        rule: {metric: scale for metric in ("mean", "detection")}
+        for rule in ("cell_weighted", "donor_balanced")
+    }
+
+    module.write_index_file(tmp_path, ["GFAP"], density_scale=density_scale)
+    doc = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
+
+    assert doc["densityScale"] == density_scale
+    for rule in ("cell_weighted", "donor_balanced"):
+        for metric in ("mean", "detection"):
+            assert doc["densityScale"][rule][metric]["lowKnots"][0] == 0
+
+
+def test_index_without_a_calibration_says_so_rather_than_inventing_one(tmp_path):
+    # An empty table is a signal the atlas can refuse loudly; a fabricated default
+    # would render every density quietly wrong with nothing on screen to say so.
+    module = load_module()
+    module.write_index_file(tmp_path, ["GFAP"])
+    doc = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
+    assert doc["densityScale"] == {}

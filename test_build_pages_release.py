@@ -51,6 +51,7 @@ def test_build_release_dir_creates_expected_pages_bundle():
         write_file(atlas_dir / "index.html", "<html>atlas</html>")
         write_file(atlas_dir / "styles.css", "body{}")
         write_file(atlas_dir / "app.js", "console.log('atlas')")
+        write_file(atlas_dir / "gene_point_cloud.js", "window.GenePointCloud={}")
         write_file(atlas_dir / "data" / "regions.js", "window.DIGITALBRAIN_REGION_DATA={}")
         write_file(atlas_dir / "data" / "allen_3d_geometry.js", "window.ALLEN_3D_ATLAS={}")
         write_file(atlas_dir / "data" / "connectivity.js", "window.DIGITALBRAIN_CONNECTIVITY_DATA={}")
@@ -103,6 +104,7 @@ def _minimal_source(source_dir: Path) -> None:
     write_file(atlas_dir / "index.html", "<html>atlas</html>")
     write_file(atlas_dir / "styles.css", "body{}")
     write_file(atlas_dir / "app.js", "x")
+    write_file(atlas_dir / "gene_point_cloud.js", "x")
     for name in (
         "regions.js",
         "allen_3d_geometry.js",

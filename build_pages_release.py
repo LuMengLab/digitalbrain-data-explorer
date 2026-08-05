@@ -32,6 +32,7 @@ def atlas_asset_map() -> dict[str, str]:
         "interactive_brain_atlas/index.html": "atlas/index.html",
         "interactive_brain_atlas/styles.css": "atlas/styles.css",
         "interactive_brain_atlas/app.js": "atlas/app.js",
+        "interactive_brain_atlas/gene_point_cloud.js": "atlas/gene_point_cloud.js",
         "interactive_brain_atlas/data/regions.js": "atlas/data/regions.js",
         "interactive_brain_atlas/data/allen_3d_geometry.js": "atlas/data/allen_3d_geometry.js",
         "interactive_brain_atlas/data/connectivity.js": "atlas/data/connectivity.js",

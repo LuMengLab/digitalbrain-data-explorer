@@ -78,7 +78,7 @@ function bootAtlas() {
   vm.runInContext(fs.readFileSync(path.join(WEB_DIR, 'atlas-bridge.js'), 'utf8'), context, {
     filename: 'atlas-bridge.js',
   });
-  ['data/regions.js', 'data/allen_3d_geometry.js', 'data/connectivity.js', 'data/atlas_knowledge.js', 'app.js']
+  ['data/regions.js', 'data/allen_3d_geometry.js', 'data/connectivity.js', 'data/atlas_knowledge.js', 'gene_point_cloud.js', 'app.js']
     .forEach((file) => {
       const code = fs.readFileSync(path.join(ATLAS_DIR, file), 'utf8');
       vm.runInContext(code, context, { filename: file });

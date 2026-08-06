@@ -65,6 +65,13 @@
     },
   });
 
+  // Single source of truth for "what colour is this cell class": the curated hex
+  // when there is one, a stable hash-derived hue otherwise. Everything that paints
+  // a class -- markers, legend, detail rows, the host's class list -- goes through here.
+  function cellTypeColour(cellType) {
+    return colors[cellType] || "#9fb4bb";
+  }
+
   const groupColors = {
     "Cerebral cortex": "#5dd9b1",
     "Hippocampal formation": "#efb866",
@@ -95,7 +102,20 @@
     cellTypes: [...source.cellTypes],
     selectedCellType: ALL_CELL_TYPES,
     dataLayer: "cells",
-    anatomyStyle: "boundaries",
+    // Gene expression layer. An ordered array of
+    // { symbol, colour, values: { acronym: value }, support: { acronym: cells }, byLabel }
+    // -- ordered because the index fixes each gene's offset angle. A region absent from
+    // a gene's table has no data and must never be drawn as a zero.
+    genes: null,
+    // The density calibration the values are to be read against. Never defaulted: it
+    // ships with the data in index.json, so a missing one is a version mismatch.
+    geneScale: null,
+    geneMetric: "mean",
+    geneRule: "cell_weighted",
+    // Which of the selected genes the region markers, the legend range and the detail
+    // headline speak for. The host owns the chip selection, so it names this one.
+    geneActive: null,
+    geneDetailProvider: null,
     connectivityPercentile: 96,
     selectedRegion: null,
     selectedConnection: null,
@@ -114,6 +134,11 @@
     minimum: 0,
     showShell: true,
     showContours: true,
+    // Parcel envelope fills have their own toggle now that the anatomy-style
+    // tabs are gone. The genes layer defaults them off on first entry (one-shot
+    // flag below); every later change is the user's own.
+    showEnvelopes: true,
+    geneEnvelopeDefaultApplied: false,
     autoRotate: false,
     rotationX: -0.05,
     rotationY: -0.72,
@@ -133,6 +158,9 @@
     linkedRegionCells: null,
     linkedScopeLabel: null,
     linkedCellStats: null,
+    // "region" once a linked scope carries a per-region breakdown, "scope" when all
+    // that could be recovered is one average repeated across the sampled parcels.
+    compositionResolution: null,
   };
 
   const dom = {
@@ -154,16 +182,15 @@
     abundanceValue: document.getElementById("abundanceValue"),
     abundanceSection: document.getElementById("abundanceSection"),
     abundanceFilterSection: document.getElementById("abundanceFilterSection"),
-    atlasSearchSection: document.getElementById("atlasSearchSection"),
     connectivitySection: document.getElementById("connectivitySection"),
     connectivityFilter: document.getElementById("connectivityFilter"),
     connectivityValue: document.getElementById("connectivityValue"),
     dmnToggle: document.getElementById("dmnToggle"),
     dataLayerTabs: document.getElementById("dataLayerTabs"),
-    anatomyStyleTabs: document.getElementById("anatomyStyleTabs"),
     search: document.getElementById("regionSearch"),
     searchResults: document.getElementById("searchResults"),
     shellToggle: document.getElementById("shellToggle"),
+    envelopeToggle: document.getElementById("envelopeToggle"),
     rotateToggle: document.getElementById("rotateToggle"),
     legendSingle: document.getElementById("legendSingle"),
     legendAll: document.getElementById("legendAll"),
@@ -179,6 +206,12 @@
     legendKey: document.getElementById("legendKey"),
     legendTitle: document.getElementById("legendTitle"),
     legendRange: document.getElementById("legendRange"),
+    legendGenes: document.getElementById("legendGenes"),
+    legendGenesMetric: document.getElementById("legendGenesMetric"),
+    legendGeneRows: document.getElementById("legendGeneRows"),
+    legendDensityRamp: document.getElementById("legendDensityRamp"),
+    legendDensityTicks: document.getElementById("legendDensityTicks"),
+    legendDensityCaption: document.getElementById("legendDensityCaption"),
     visibleCount: document.getElementById("visibleCount"),
     cellTypeCount: document.getElementById("cellTypeCount"),
     secondaryCountLabel: document.getElementById("secondaryCountLabel"),
@@ -194,6 +227,11 @@
     rankBadge: document.getElementById("rankBadge"),
     compositionBars: document.getElementById("compositionBars"),
     compositionSection: document.getElementById("compositionSection"),
+    compositionTitle: document.getElementById("compositionTitle"),
+    compositionCaption: document.getElementById("compositionCaption"),
+    geneRegionSection: document.getElementById("geneRegionSection"),
+    geneRegionRows: document.getElementById("geneRegionRows"),
+    geneRegionCaption: document.getElementById("geneRegionCaption"),
     memberRegionsSection: document.getElementById("memberRegionsSection"),
     memberRegionsCount: document.getElementById("memberRegionsCount"),
     memberRegionList: document.getElementById("memberRegionList"),
@@ -220,7 +258,6 @@
     clearFunctionFocus: document.getElementById("clearFunctionFocus"),
     detailDataStatus: document.getElementById("detailDataStatus"),
     datasetStatus: document.getElementById("datasetStatus"),
-    geometryStatus: document.getElementById("geometryStatus"),
     detailGeometryStatus: document.getElementById("detailGeometryStatus"),
     detailMappingBasis: document.getElementById("detailMappingBasis"),
     csvInput: document.getElementById("csvInput"),
@@ -645,10 +682,21 @@
 
   function getVisibleRegions() {
     let anatomicallyMapped = state.regions.filter((region) => region.hasAnatomy);
-    if (state.linkedActiveRegions) {
+    // The gene layer is global by construction: its data is a cross-study merge with
+    // the dataset axis collapsed, so the Explorer's current selection does not apply.
+    // Without this bypass the scope would silently crop the layer, which reads as
+    // "the gene is not expressed here" when it is really a filter artefact.
+    if (state.linkedActiveRegions && state.dataLayer !== "genes") {
       anatomicallyMapped = anatomicallyMapped.filter((region) =>
         state.linkedActiveRegions.has(region.acronym),
       );
+    }
+    if (state.dataLayer === "genes") {
+      // Any selected gene is enough to keep a region on screen. Filtering by the active
+      // gene alone hid parcels the cloud was visibly lighting up for another gene, and
+      // left them unclickable -- so the panel could not be opened for the very
+      // comparison a multi-gene selection exists to make.
+      return anatomicallyMapped.filter((region) => regionHasAnyGeneValue(region));
     }
     if (isAllCellTypes()) return anatomicallyMapped;
     return anatomicallyMapped.filter(
@@ -656,7 +704,52 @@
     );
   }
 
+  // Value provider for the marker colour/radius channel. Returns null for "no data"
+  // so callers can paint neutral grey and keep the region out of the colour range.
+  //
+  // Region-level and first-gene-only on purpose: this feeds the range readout and the
+  // detail panel, which list one region at a time and so are unaffected by the
+  // label-level merging the point cloud needs.
+  // The gene the panel and the region markers speak for. The host names it in the
+  // payload (it owns the chip selection); the first gene is the fallback for an
+  // older payload that does not.
+  function activeGene() {
+    const genes = state.genes || [];
+    if (!genes.length) return null;
+    return genes.find((gene) => gene.symbol === state.geneActive) || genes[0];
+  }
+
+  function geneValueFor(region) {
+    const gene = activeGene();
+    if (!gene) return null;
+    const value = gene.values[region.acronym];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+
+  function regionHasAnyGeneValue(region) {
+    return (state.genes || []).some((gene) => {
+      const value = gene.values[region.acronym];
+      return typeof value === "number" && Number.isFinite(value);
+    });
+  }
+
+  function getGeneRange() {
+    const values = state.regions
+      .filter((region) => region.hasAnatomy)
+      .map((region) => geneValueFor(region))
+      .filter((value) => value !== null);
+    if (!values.length) return { min: null, max: null };
+    return { min: Math.min(...values), max: Math.max(...values) };
+  }
+
   function getRange() {
+    if (state.dataLayer === "genes") {
+      const range = getGeneRange();
+      // Detection rate has a natural ceiling, so it keeps a fixed 0-100% scale to
+      // stay comparable across genes; mean expression is unbounded and stretches.
+      if (state.geneMetric === "detection") return { min: 0, max: 1 };
+      return { min: range.min ?? 0, max: range.max ?? 0 };
+    }
     const values = state.regions.filter((region) => region.hasAnatomy).map(
       (region) => region.composition[state.selectedCellType] || 0,
     );
@@ -669,6 +762,21 @@
   function labelIndicesForRegion(region) {
     return new Set(region?.geometryMapping?.labelIndices || []);
   }
+
+  // Inverse of regionMappings: which DigitalBrain acronyms claim each Allen label.
+  // Allen has one hippocampus-head label against ten DigitalBrain subregions, so the
+  // point cloud's colouring unit has to be the label, not the region. Built once --
+  // it is a property of the geometry, not of whichever genes are selected.
+  const labelToRegions = (() => {
+    const claims = new Map();
+    Object.entries(anatomy.regionMappings).forEach(([acronym, mapping]) => {
+      (mapping.labelIndices || []).forEach((labelIndex) => {
+        if (!claims.has(labelIndex)) claims.set(labelIndex, []);
+        claims.get(labelIndex).push(acronym);
+      });
+    });
+    return claims;
+  })();
 
   function atlasLabelStyles(boundaryLayer = false) {
     const selectedLabels = labelIndicesForRegion(state.selectedRegion);
@@ -691,6 +799,179 @@
       }
       return { color, alpha, selected, hovered };
     });
+  }
+
+  // Point size encodes how trustworthy the region-to-label mapping is, so a viewer can
+  // tell a direct ontology match from a curated gyral stand-in. A label claimed at more
+  // than one confidence takes the most conservative of them (only label 51, HTHma).
+  const GENE_POINT_SIZES = {
+    recoverable_exact_or_union: 1.9,
+    coarse_ontology_proxy: 1.6,
+    curated_gyral_proxy: 1.4,
+  };
+  const GENE_POINT_SIZE_ORDER = [
+    "recoverable_exact_or_union",
+    "coarse_ontology_proxy",
+    "curated_gyral_proxy",
+  ];
+
+  const genePointSizeByLabel = (() => {
+    const sizes = new Float64Array(anatomy.labels.length).fill(GENE_POINT_SIZES.curated_gyral_proxy);
+    const worst = new Int8Array(anatomy.labels.length).fill(-1);
+    Object.values(anatomy.regionMappings).forEach((mapping) => {
+      const rank = GENE_POINT_SIZE_ORDER.indexOf(mapping.status);
+      if (rank < 0) return;
+      (mapping.labelIndices || []).forEach((labelIndex) => {
+        if (rank > worst[labelIndex]) {
+          worst[labelIndex] = rank;
+          sizes[labelIndex] = GENE_POINT_SIZES[mapping.status];
+        }
+      });
+    });
+    return sizes;
+  })();
+
+  // Fisher-Yates over 14k points is far too costly to redo every frame, and the
+  // permutation is a pure function of the group and label anyway.
+  const genePermutations = new Map();
+  function genePermutationFor(groupKey, labelIndex, size) {
+    const key = `${groupKey}:${labelIndex}`;
+    let order = genePermutations.get(key);
+    if (!order || order.length !== size) {
+      // Offset the seed per group so the two groups scatter independently.
+      order = GenePointCloud.permutationFor(
+        groupKey === "boundary" ? labelIndex + anatomy.labels.length : labelIndex,
+        size,
+      );
+      genePermutations.set(key, order);
+    }
+    return order;
+  }
+
+  // Hit testing for the cloud. A per-region 8-12px disc cannot cover a parcel whose
+  // projection spans over 100px, which showed up as "a whole area is lit but only a
+  // small patch in the middle is clickable". So while drawing, each voxel also claims
+  // its 16px screen cell, keeping whichever point is nearest the camera. Lookup is then
+  // O(1) on mousemove, and the extra cost is one array write per point.
+  //
+  // The gene index is stored alongside the label because two genes at different offsets
+  // occupy different pixels: without it a tooltip could not say which gene was meant.
+  const GENE_HIT_CELL = 16;
+  const geneHitGrid = { cols: 0, rows: 0, label: null, gene: null, depth: null, filled: 0 };
+
+  function resetGeneHitGrid() {
+    const cols = Math.max(1, Math.ceil(width / GENE_HIT_CELL));
+    const rows = Math.max(1, Math.ceil(height / GENE_HIT_CELL));
+    if (geneHitGrid.cols !== cols || geneHitGrid.rows !== rows || !geneHitGrid.label) {
+      geneHitGrid.cols = cols;
+      geneHitGrid.rows = rows;
+      geneHitGrid.label = new Int32Array(cols * rows);
+      geneHitGrid.gene = new Int32Array(cols * rows);
+      geneHitGrid.depth = new Float64Array(cols * rows);
+    }
+    geneHitGrid.label.fill(-1);
+    geneHitGrid.gene.fill(-1);
+    geneHitGrid.filled = 0;
+  }
+
+  function claimGeneHitCell(x, y, z, labelIndex, geneIndex) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const cell = Math.floor(y / GENE_HIT_CELL) * geneHitGrid.cols + Math.floor(x / GENE_HIT_CELL);
+    if (geneHitGrid.label[cell] === -1) {
+      geneHitGrid.filled += 1;
+    } else if (z <= geneHitGrid.depth[cell]) {
+      return;
+    }
+    geneHitGrid.label[cell] = labelIndex;
+    geneHitGrid.gene[cell] = geneIndex;
+    geneHitGrid.depth[cell] = z;
+  }
+
+  // Which of the regions sharing this label to name. The cloud drew the support-weighted
+  // merge of all of them, so the honest answer is the one contributing most of that
+  // evidence rather than whichever happens to sort first.
+  function dominantRegionForLabel(labelIndex, gene) {
+    const claimants = labelToRegions.get(labelIndex) || [];
+    let best = null;
+    let bestSupport = -1;
+    for (const acronym of claimants) {
+      const value = gene.values[acronym];
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      const cells = Number(gene.support[acronym]) || 0;
+      if (cells > bestSupport) {
+        bestSupport = cells;
+        best = acronym;
+      }
+    }
+    if (!best) return null;
+    return state.regions.find((region) => region.acronym === best) || null;
+  }
+
+  function geneHitAt(x, y) {
+    if (state.dataLayer !== "genes" || !state.genes || !state.genes.length) return null;
+    if (!geneHitGrid.label || x < 0 || y < 0 || x >= width || y >= height) return null;
+    const cell = Math.floor(y / GENE_HIT_CELL) * geneHitGrid.cols + Math.floor(x / GENE_HIT_CELL);
+    const labelIndex = geneHitGrid.label[cell];
+    if (labelIndex === -1) return null;
+    const geneIndex = geneHitGrid.gene[cell];
+    const gene = state.genes[geneIndex];
+    if (!gene) return null;
+    return {
+      labelIndex,
+      geneIndex,
+      symbol: gene.symbol,
+      region: dominantRegionForLabel(labelIndex, gene),
+    };
+  }
+
+  function drawGenePointGroups(pointGroups, groupKey) {
+    const genes = state.genes;
+    const geneCount = genes.length;
+    ctx.save();
+    for (let labelIndex = 0; labelIndex < pointGroups.length; labelIndex += 1) {
+      const points = pointGroups[labelIndex];
+      if (!points.length) continue;
+      const order = genePermutationFor(groupKey, labelIndex, points.length);
+      const baseSize = genePointSizeByLabel[labelIndex];
+      for (let geneIndex = 0; geneIndex < geneCount; geneIndex += 1) {
+        const gene = genes[geneIndex];
+        if (!gene.byLabel.hasValue[labelIndex]) continue;
+        const lit = GenePointCloud.litIndices(
+          order, geneIndex, geneCount, gene.byLabel.values[labelIndex], state.geneScale,
+        );
+        if (!lit.length) continue;
+        // Offset direction fans the genes apart; the radius rides the perspective so it
+        // stays one physical quantity rather than one screen quantity.
+        const angle = (2 * Math.PI * geneIndex) / geneCount;
+        const offsetX = Math.cos(angle) * GENE_OFFSET_RADIUS;
+        const offsetY = Math.sin(angle) * GENE_OFFSET_RADIUS;
+        ctx.fillStyle = gene.colour;
+        ctx.globalAlpha = 0.85;
+        for (const pointIndex of lit) {
+          const projected = project(points[pointIndex]);
+          const size = Math.max(0.9, baseSize * projected.perspective);
+          // Deterministic sub-pixel jitter breaks up the stripes the voxel lattice
+          // would otherwise print; keyed on the point so it never shimmers.
+          const jitter = geneJitter(labelIndex, pointIndex, geneIndex);
+          const screenX = projected.x + (offsetX + jitter.x) * projected.perspective;
+          const screenY = projected.y + (offsetY + jitter.y) * projected.perspective;
+          ctx.fillRect(screenX - size / 2, screenY - size / 2, size, size);
+          claimGeneHitCell(screenX, screenY, projected.z, labelIndex, geneIndex);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  const GENE_OFFSET_RADIUS = 2;
+
+  function geneJitter(labelIndex, pointIndex, geneIndex) {
+    const seed = (labelIndex * 92837111) ^ (pointIndex * 689287499) ^ (geneIndex * 283923481);
+    const mixed = Math.imul(seed ^ (seed >>> 15), 2246822519) >>> 0;
+    return {
+      x: ((mixed & 0xffff) / 0xffff - 0.5),
+      y: (((mixed >>> 16) & 0xffff) / 0xffff - 0.5),
+    };
   }
 
   function drawAtlasPointGroups(pointGroups, boundaryLayer = false) {
@@ -831,11 +1112,23 @@
   }
 
   function drawAtlasAnatomy() {
-    drawAtlasPointGroups(atlasOuterPointGroups);
-    if (state.showContours) drawAtlasPointGroups(atlasBoundaryPointGroups, true);
-    if (state.showContours && state.anatomyStyle === "boundaries") {
-      drawAtlasParcelEnvelopes();
+    const geneMode = state.dataLayer === "genes" && Boolean(state.genes && state.genes.length);
+    if (geneMode) {
+      // Both groups, unconditionally. The boundary group holds 56% of the voxels and is
+      // the only substrate for 26 of the 90 claimed labels, so in the genes layer it is
+      // data rather than contour decoration -- gating it on state.showContours would
+      // make those genes vanish silently.
+      resetGeneHitGrid();
+      drawGenePointGroups(atlasOuterPointGroups, "outer");
+      drawGenePointGroups(atlasBoundaryPointGroups, "boundary");
+    } else {
+      // Outside the genes layer the cloud is anatomy again and hit testing goes back to
+      // the per-region discs, so a stale grid must not answer for it.
+      if (geneHitGrid.filled) resetGeneHitGrid();
+      drawAtlasPointGroups(atlasOuterPointGroups);
+      if (state.showContours) drawAtlasPointGroups(atlasBoundaryPointGroups, true);
     }
+    if (state.showEnvelopes) drawAtlasParcelEnvelopes();
     drawSelectedParcelHalo();
   }
 
@@ -1027,7 +1320,9 @@
       }
       start = end;
     }
-    ctx.globalAlpha = 1;
+    // The hub stays opaque where the glyph is the data (cells layer); in the
+    // genes layer the whole glyph is translucent so the cloud reads through.
+    ctx.globalAlpha = state.dataLayer === "genes" ? alpha : 1;
     ctx.fillStyle = "rgba(5, 14, 21, 0.72)";
     ctx.beginPath();
     ctx.arc(point.x, point.y, Math.max(1.2, radius * 0.23), 0, Math.PI * 2);
@@ -1257,11 +1552,18 @@
     dom.empty.hidden = visibleRegions.length > 0;
     dom.visibleCount.textContent = String(visibleRegions.length);
     dom.cellTypeCount.textContent = String(state.cellTypes.length);
-    dom.secondaryCountLabel.textContent = "cell classes";
+    dom.secondaryCountLabel.textContent = "cell types";
 
     const allMode = isAllCellTypes();
-    const { min, max } = allMode ? { min: 0, max: 1 } : getRange();
-    if (!allMode) {
+    const geneMode = state.dataLayer === "genes";
+    const { min, max } = allMode && !geneMode ? { min: 0, max: 1 } : getRange();
+    if (geneMode) {
+      dom.legendRange.textContent =
+        state.geneMetric === "detection"
+          ? "0–100%"
+          : `${min.toFixed(2)}–${max.toFixed(2)}`;
+      renderGeneLegend();
+    } else if (!allMode) {
       dom.legendRange.textContent = `${Math.round(min * 100)}–${Math.round(max * 100)}%`;
     }
     const projected = visibleRegions
@@ -1284,22 +1586,50 @@
     for (const item of projected) {
       const { region, projected: point } = item;
       const dominant = dominantCellType(region);
-      const value = allMode ? dominant.value : region.composition[state.selectedCellType] || 0;
-      let normalized = allMode ? 0.62 : max === min ? 0.5 : (value - min) / (max - min);
-      if (linkedCells) {
+      const geneValue = geneMode ? geneValueFor(region) : null;
+      const value = geneMode
+        ? geneValue
+        : allMode
+          ? dominant.value
+          : region.composition[state.selectedCellType] || 0;
+      let normalized = geneMode
+        ? geneValue === null
+          // Kept on screen because another selected gene has data here, so the marker
+          // stays clickable but sits at the cold, smallest end rather than claiming a
+          // low measurement for the active gene.
+          ? 0
+          : max === min
+            ? 0.5
+            : (value - min) / (max - min)
+        : allMode
+          ? 0.62
+          : max === min
+            ? 0.5
+            : (value - min) / (max - min);
+      if (linkedCells && !geneMode) {
         const count = linkedCells[region.acronym] || 0;
         normalized = maxLinkedCount > 0 ? Math.sqrt(count) / Math.sqrt(maxLinkedCount) : 0.5;
       }
       const selected = state.selectedRegion?.id === region.id;
       const hovered = state.hoveredRegion?.id === region.id;
       const radius =
-        (allMode
-          ? linkedCells
-            ? 3.2 + normalized * 5
-            : 5.4
-          : 2.8 + normalized * 4.2) * Math.max(0.72, point.perspective);
-      const accent = colors[allMode ? dominant.cellType : state.selectedCellType] || "#61ddb2";
-      const alpha = allMode ? 0.82 : 0.42 + normalized * 0.55;
+        (geneMode
+          ? 3.2 + normalized * 5
+          : allMode
+            ? linkedCells
+              ? 3.2 + normalized * 5
+              : 5.4
+            : 2.8 + normalized * 4.2) * Math.max(0.72, point.perspective);
+      // In the gene layer the marker belongs to the active gene, so it takes that
+      // gene's chip colour: the chips, the cloud, the legend and this dot then all
+      // name the same thing. A cell-class colour here described nothing.
+      const accent = geneMode
+        ? (activeGene()?.colour || "#61ddb2")
+        : colors[allMode ? dominant.cellType : state.selectedCellType] || "#61ddb2";
+      // A near-opaque composition glyph on top of the gene cloud reads as
+      // clutter: in the genes layer the cloud is the data, so the glyph goes
+      // translucent there (the cells layer keeps its 0.82).
+      const alpha = allMode ? (geneMode ? 0.45 : 0.82) : 0.42 + normalized * 0.55;
 
       if (selected || hovered) {
         const glow = ctx.createRadialGradient(
@@ -1587,7 +1917,7 @@
 
     ctx.clearRect(0, 0, width, height);
     if (state.showShell) drawAtlasAnatomy();
-    if (state.dataLayer === "cells") drawRegions();
+    if (state.dataLayer === "cells" || state.dataLayer === "genes") drawRegions();
     else drawConnectivity();
     requestAnimationFrame(render);
   }
@@ -1659,7 +1989,7 @@
     dom.abundanceSection.classList.toggle("disabled", allMode);
     dom.abundanceValue.textContent = allMode ? "All" : `${Math.round(state.minimum * 100)}%`;
     dom.legendTitle.textContent = allMode ? "All cell types" : state.selectedCellType;
-    dom.focusLabel.textContent = allMode ? "Dominant cell class" : state.selectedCellType;
+    dom.focusLabel.textContent = allMode ? "Dominant cell type" : state.selectedCellType;
     const accent = colors[allMode ? dominantCellType(state.regions[0]).cellType : state.selectedCellType] || "#61ddb2";
     dom.focusSwatch.style.background = accent;
     dom.focusSwatch.style.color = accent;
@@ -1685,24 +2015,56 @@
 
   function syncDataLayerControls() {
     const cellLayer = state.dataLayer === "cells";
+    const geneLayer = state.dataLayer === "genes";
+    // Three modes, not two: the genes layer draws region markers like the cells
+    // layer, so it keeps the marker legend and hides the connectivity chrome, but
+    // it has no cell-class threshold or per-region composition of its own.
+    const markerLayer = cellLayer || geneLayer;
     document.querySelectorAll("[data-layer]").forEach((button) => {
       button.classList.toggle("active", button.dataset.layer === state.dataLayer);
     });
     dom.abundanceSection.hidden = !cellLayer;
     dom.abundanceFilterSection.hidden = !cellLayer;
-    dom.connectivitySection.hidden = cellLayer;
-    dom.legendConnectivity.hidden = cellLayer;
-    dom.visualKey.hidden = !cellLayer;
-    dom.mappingKey.hidden = !cellLayer;
-    dom.compositionSection.hidden = !cellLayer;
+    dom.connectivitySection.hidden = markerLayer;
+    dom.legendConnectivity.hidden = markerLayer;
+    // The genes layer needs a legend of its own. legendRange has always carried the
+    // computed range, but it sits inside legendSingle, which syncCellTypeControls() hides
+    // outside the cells layer -- so the range was correct, written, and unseeable. This
+    // belongs here rather than there because it is layer-driven, like legendConnectivity,
+    // and syncCellTypeControls() is only reached on the cells path anyway.
+    dom.legendGenes.hidden = !geneLayer;
+    dom.visualKey.hidden = !markerLayer;
+    dom.mappingKey.hidden = !markerLayer;
+    // The gene layer reuses this section for its per-class values (renderGeneComposition
+    // writes them here), so hiding it outside the cells layer meant that breakdown was
+    // computed, written and never seen.
+    dom.compositionSection.hidden = !cellLayer && !geneLayer;
+    if (dom.geneRegionSection) dom.geneRegionSection.hidden = !geneLayer;
     dom.connectivityDetailSection.hidden =
-      cellLayer || !state.selectedRegion || state.selectedRegion.isGroup;
+      markerLayer || !state.selectedRegion || state.selectedRegion.isGroup;
     dom.connectionInsightSection.hidden =
-      cellLayer || !state.selectedConnection;
-    dom.interactionHintText.textContent = cellLayer
-      ? "Drag to rotate anatomy · Scroll to zoom · Click a cell-profile marker"
-      : "Drag to rotate anatomy · Scroll to zoom · Click a connectivity node";
-    if (cellLayer) {
+      markerLayer || !state.selectedConnection;
+    dom.interactionHintText.textContent = geneLayer
+      ? "Drag to rotate anatomy · Scroll to zoom · Click a region for its cell-type detail"
+      : cellLayer
+        ? "Drag to rotate anatomy · Scroll to zoom · Click a cell-profile marker"
+        : "Drag to rotate anatomy · Scroll to zoom · Click a connectivity node";
+    if (geneLayer) {
+      const range = getGeneRange();
+      const covered = state.genes && state.genes.length ? getVisibleRegions().length : 0;
+      dom.datasetStatus.classList.add("observed");
+      dom.datasetStatus.innerHTML = `
+        <span class="status-dot"></span>
+        <span>Gene expression · global scope</span>
+        <strong>${
+          range.min === null
+            ? "no data for this gene"
+            : `${covered} regions with data`
+        }</strong>
+      `;
+      dom.legendSingle.hidden = true;
+      dom.legendAll.hidden = true;
+    } else if (cellLayer) {
       const linked = state.dataStatus === "linked";
       dom.datasetStatus.classList.toggle(
         "observed",
@@ -1717,7 +2079,9 @@
         }</span>
         <strong>${
           linked
-            ? `${state.linkedActiveRegions ? state.linkedActiveRegions.size : 0} regions · scope-level`
+            ? `${state.linkedActiveRegions ? state.linkedActiveRegions.size : 0} regions · ${
+                state.compositionResolution === "region" ? "per-region" : "scope-level"
+              }`
             : state.dataStatus === "observed"
               ? `${state.importedRegionCount} imported regions`
               : "105 profiles placed"
@@ -1739,10 +2103,17 @@
       updateConnectivityRangeBackground();
     }
     updateFunctionFocusDisplay();
+    // Tell the host page which layer is live: gene data is a cross-study merge with
+    // the dataset axis collapsed, so the Explorer must disable its scope filters.
+    window.dispatchEvent(
+      new window.CustomEvent("digitalbrain-atlas-layer", {
+        detail: { layer: state.dataLayer },
+      }),
+    );
   }
 
   function selectDataLayer(layer) {
-    if (!["cells", "functional", "structural"].includes(layer)) return;
+    if (!["cells", "functional", "structural", "genes"].includes(layer)) return;
     const preserveConnection = state.selectedConnection?.layer === layer;
     state.dataLayer = layer;
     state.hoveredRegion = null;
@@ -1754,14 +2125,6 @@
     if (state.selectedRegion) {
       updateDetail(state.selectedRegion, { preserveConnection });
     }
-  }
-
-  function selectAnatomyStyle(style) {
-    if (!["flecks", "boundaries"].includes(style)) return;
-    state.anatomyStyle = style;
-    document.querySelectorAll("[data-anatomy-style]").forEach((button) => {
-      button.classList.toggle("active", button.dataset.anatomyStyle === style);
-    });
   }
 
   function updateMemberRegionList(region) {
@@ -1927,6 +2290,327 @@
     });
   }
 
+  // --- gene expression detail panel ---
+  //
+  // The atlas never computes gene numbers; it asks the host's provider and renders
+  // whatever comes back. The provider answers for the whole selection, not just the
+  // gene in focus, because a region is where several genes are actually compared.
+  // A class absent from `rows` has no cells at all in this region, which is a
+  // different statement from "expression measured as zero", so it is labelled rather
+  // than drawn as an empty bar at 0.
+
+  function geneDetailFor(region) {
+    if (!state.geneDetailProvider) return null;
+    try {
+      return state.geneDetailProvider(region.acronym) || null;
+    } catch (error) {
+      // A broken provider must not take the whole panel down with it.
+      return null;
+    }
+  }
+
+  // One shape for one gene and for six, so the panel has a single code path. The
+  // active entry is the one the headline, the rank badge and the per-class breakdown
+  // speak for; the rest are listed beside it with their own values.
+  function geneSnapshotFor(region) {
+    const answer = geneDetailFor(region);
+    if (!answer) return null;
+    const genes = Array.isArray(answer.genes) ? answer.genes.filter(Boolean) : [];
+    const active = genes.find((gene) => gene.symbol === answer.active) || genes[0] || null;
+    return {
+      metric: answer.metric || state.geneMetric,
+      rule: answer.rule || state.geneRule,
+      genes,
+      active,
+    };
+  }
+
+  function geneMetricLabel(metric) {
+    return metric === "detection" ? "detection rate" : "mean expression";
+  }
+
+  function geneFocusLabel(gene, metric) {
+    if (!gene || !gene.symbol) return "Gene expression";
+    return `${gene.symbol} · ${geneMetricLabel(metric || state.geneMetric)}`;
+  }
+
+  function formatGeneValue(value, metric) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+    return (metric || state.geneMetric) === "detection"
+      ? formatPercent(value)
+      : value.toFixed(3);
+  }
+
+  // The gene's own colour, the one the chip and the cloud already use. Deriving a
+  // spectrum colour from the value instead made the swatch disagree with both, and
+  // said nothing extra now that the value is printed next to it.
+  function geneSwatchColour(gene) {
+    return (gene && gene.colour) || "#4b5566";
+  }
+
+  function geneSupportLabel(gene) {
+    if (!gene) return "Gene expression";
+    const support = gene.support;
+    if (!support) return "No data in this region";
+    const datasets = Number(support.datasets) || 0;
+    const donors = Number(support.donors) || 0;
+    const cells = Number(support.cells) || 0;
+    return `${datasets.toLocaleString()} datasets · ${donors.toLocaleString()} donors · ${cells.toLocaleString()} cells`;
+  }
+
+  // Where this region sits among all regions carrying data for one gene. Counted
+  // rather than sorted, and per gene: with several genes selected, one shared rank
+  // would belong to whichever gene happened to be first.
+  function geneRankFor(region, symbol) {
+    const painted = (state.genes || []).find((gene) => gene.symbol === symbol);
+    if (!painted) return null;
+    const values = state.regions
+      .filter((candidate) => candidate.hasAnatomy)
+      .map((candidate) => painted.values[candidate.acronym])
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    const own = painted.values[region.acronym];
+    if (typeof own !== "number" || !Number.isFinite(own)) {
+      return { rank: null, total: values.length };
+    }
+    return { rank: values.filter((value) => value > own).length + 1, total: values.length };
+  }
+
+  function geneRankBadge(region, gene) {
+    if (!gene || typeof gene.value !== "number" || !Number.isFinite(gene.value)) {
+      return "No data";
+    }
+    const ranked = geneRankFor(region, gene.symbol);
+    if (!ranked || ranked.rank === null) return `${ranked ? ranked.total : 0} with data`;
+    return `#${ranked.rank} of ${ranked.total}`;
+  }
+
+  function geneNoticeRow(text) {
+    const row = document.createElement("div");
+    row.className = "composition-row composition-notice";
+    const label = document.createElement("span");
+    label.className = "composition-label";
+    label.textContent = text;
+    row.append(label);
+    return row;
+  }
+
+  // One row of the per-class breakdown, wired to its class colour so the panel,
+  // the legend and the markers cannot disagree about what a class looks like.
+  function compositionRow(cellType, measured) {
+    const row = document.createElement("div");
+    row.className = "composition-row";
+    row.style.setProperty("--class-colour", cellTypeColour(cellType));
+    const dot = document.createElement("span");
+    dot.className = "composition-dot";
+    row.append(dot);
+    const label = document.createElement("span");
+    label.className = "composition-label";
+    label.textContent = cellType;
+    row.append(label);
+    if (!measured) row.classList.add("composition-missing");
+    return row;
+  }
+
+  // The atlas cannot change which gene is active -- the host owns the chips -- so a
+  // click on a row asks for it and the host answers with a fresh applyGeneValues.
+  // An event rather than a callback keeps this the same one-way street the layer
+  // announcement already uses.
+  function requestGeneSelection(symbol) {
+    window.dispatchEvent(
+      new CustomEvent("digitalbrain-gene-select", { detail: { symbol } }),
+    );
+  }
+
+  // Every selected gene, in chip order, with its value in this region. This is the
+  // panel's answer to "which of my genes does this parcel favour": bars are relative
+  // to the strongest gene here, so the comparison is within the region rather than
+  // against the whole-brain scale the legend already carries.
+  function renderGeneRegionRows(region, snapshot) {
+    if (!dom.geneRegionRows) return;
+    dom.geneRegionRows.replaceChildren();
+    if (dom.geneRegionCaption) {
+      dom.geneRegionCaption.textContent = snapshot
+        ? geneMetricLabel(snapshot.metric).replace(/^./, (c) => c.toUpperCase())
+        : "Mean expression";
+    }
+    const genes = snapshot ? snapshot.genes : [];
+    if (!genes.length) {
+      dom.geneRegionRows.append(geneNoticeRow("No gene selected."));
+      return;
+    }
+
+    const measured = genes
+      .map((gene) => gene.value)
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    const peak = measured.length ? Math.max(...measured) : 0;
+    const activeSymbol = snapshot.active ? snapshot.active.symbol : null;
+
+    genes.forEach((gene) => {
+      const hasValue = typeof gene.value === "number" && Number.isFinite(gene.value);
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "gene-region-row";
+      row.dataset.gene = gene.symbol;
+      row.style.setProperty("--gene-colour", gene.colour || "#8ea6ad");
+      if (gene.symbol === activeSymbol) row.classList.add("active");
+      if (!hasValue) row.classList.add("missing");
+      row.setAttribute("aria-pressed", gene.symbol === activeSymbol ? "true" : "false");
+
+      const swatch = document.createElement("span");
+      swatch.className = "gene-region-swatch";
+      row.append(swatch);
+
+      const symbol = document.createElement("span");
+      symbol.className = "gene-region-symbol";
+      symbol.textContent = gene.symbol;
+      row.append(symbol);
+
+      const readout = document.createElement("strong");
+      readout.className = "gene-region-value";
+      // "No data" rather than 0: this gene was not measured in this region at all.
+      readout.textContent = hasValue ? formatGeneValue(gene.value, snapshot.metric) : "No data";
+      row.append(readout);
+
+      const ranked = hasValue ? geneRankFor(region, gene.symbol) : null;
+      const rank = document.createElement("span");
+      rank.className = "gene-region-rank";
+      rank.textContent = ranked && ranked.rank !== null ? `#${ranked.rank}/${ranked.total}` : "";
+      row.append(rank);
+
+      const track = document.createElement("span");
+      track.className = "gene-region-track";
+      if (hasValue && peak > 0) {
+        const fill = document.createElement("i");
+        fill.style.width = `${Math.max(2, (gene.value / peak) * 100).toFixed(1)}%`;
+        track.append(fill);
+      }
+      row.append(track);
+
+      row.title = hasValue
+        ? `${gene.symbol}: ${formatGeneValue(gene.value, snapshot.metric)} here · ${geneSupportLabel(gene)}`
+        : `${gene.symbol}: not measured in this region`;
+      row.addEventListener("click", () => requestGeneSelection(gene.symbol));
+      dom.geneRegionRows.append(row);
+    });
+  }
+
+  function renderGeneComposition(gene, ruleMetric) {
+    const metric = ruleMetric || state.geneMetric;
+    if (dom.compositionTitle) {
+      dom.compositionTitle.textContent = gene && gene.symbol
+        ? `${gene.symbol} per cell type`
+        : "Per cell type";
+    }
+    if (dom.compositionCaption) {
+      dom.compositionCaption.textContent = geneMetricLabel(metric);
+    }
+    if (!gene) {
+      dom.compositionBars.append(
+        geneNoticeRow("Pick a gene to see its per-class values here."),
+      );
+      return;
+    }
+    if (gene.detailAvailable === false) {
+      dom.compositionBars.append(
+        geneNoticeRow(
+          `${gene.symbol || "This gene"} ships region-level values only, so the per-class breakdown is not available.`,
+        ),
+      );
+      return;
+    }
+
+    const byType = new Map();
+    (gene.rows || []).forEach((entry) => {
+      if (entry && entry.cellType) byType.set(entry.cellType, entry);
+    });
+    if (!byType.size) {
+      dom.compositionBars.append(
+        geneNoticeRow("No cells of any class were measured in this region."),
+      );
+      return;
+    }
+
+    const values = [...byType.values()]
+      .map((entry) => entry[metric])
+      .filter((value) => typeof value === "number" && Number.isFinite(value));
+    const maxValue = metric === "detection" ? 1 : Math.max(...values, 0);
+
+    // Ordered by value with the measured classes first, so the ones carrying data
+    // are at the top and the absent ones collect at the bottom.
+    state.cellTypes
+      .map((cellType) => {
+        const entry = byType.get(cellType);
+        const raw = entry ? entry[metric] : undefined;
+        const measured = typeof raw === "number" && Number.isFinite(raw);
+        return { cellType, value: measured ? raw : null, cells: entry ? entry.cells : 0 };
+      })
+      .sort((a, b) => {
+        if (a.value === null && b.value === null) return a.cellType.localeCompare(b.cellType);
+        if (a.value === null) return 1;
+        if (b.value === null) return -1;
+        return b.value - a.value;
+      })
+      .forEach(({ cellType, value, cells }) => {
+        const row = compositionRow(cellType, value !== null);
+
+        const readout = document.createElement("strong");
+        readout.textContent = value === null ? "No data" : formatGeneValue(value, metric);
+        row.append(readout);
+
+        const track = document.createElement("div");
+        track.className = "bar-track";
+        if (value !== null) {
+          const fill = document.createElement("div");
+          fill.className = "bar-fill";
+          fill.style.width = `${maxValue > 0 ? (value / maxValue) * 100 : 0}%`;
+          track.append(fill);
+          // The cell count is the weight behind this class's mean.
+          row.title = `${cellType}: ${formatGeneValue(value, metric)} from ${(Number(cells) || 0).toLocaleString()} cells`;
+        } else {
+          row.title = `${cellType}: no cells of this class were measured in this region`;
+        }
+        row.append(track);
+
+        dom.compositionBars.append(row);
+      });
+  }
+
+  // Tells the host page what is selected, so a panel outside the atlas can follow the
+  // canvas without polling.
+  //
+  // A group aggregate has no acronym of its own -- it stands for its members -- so it
+  // travels as isGroup with the member list, and a caller that only understands single
+  // regions can ignore it by checking acronym. That branch is defensive rather than live:
+  // groups are only selectable from the schematic anatomy mode, which is hidden in both
+  // shipped pages. Without it a re-enabled schematic would hand listeners the aggregate's
+  // placeholder acronym ("32 REGIONS"), which names no region and would fail quietly.
+  function announceSelection(region) {
+    if (typeof window.CustomEvent !== "function") return;
+    let detail = null;
+    if (region && region.isGroup) {
+      detail = {
+        acronym: null,
+        name: region.name,
+        group: region.name,
+        isGroup: true,
+        members: state.regions
+          .filter((candidate) => candidate.group === region.name)
+          .map((candidate) => candidate.acronym),
+      };
+    } else if (region) {
+      detail = {
+        acronym: region.acronym,
+        name: region.name,
+        group: region.group,
+        isGroup: false,
+        members: [region.acronym],
+      };
+    }
+    window.dispatchEvent(
+      new window.CustomEvent("digitalbrain-region-select", { detail }),
+    );
+  }
+
   function updateDetail(region, options = {}) {
     const preserveConnection = Boolean(options.preserveConnection);
     if (!region) {
@@ -1941,12 +2625,16 @@
       updateRegionAnnotation(null);
       updateConnectionInsight();
       updateAnatomySelection();
+      announceSelection(null);
       return;
     }
 
     if (!preserveConnection) state.selectedConnection = null;
     state.selectedRegion = region;
     state.selectedGroup = region.isGroup ? region.name : region.group;
+    // Announced here rather than at the end: this function returns early for the gene
+    // layer, and the host only needs the identity, not the rendered panel.
+    announceSelection(region);
     updateAnatomySelection();
     state.autoRotate = false;
     dom.rotateToggle.checked = false;
@@ -1965,34 +2653,50 @@
     const focusCellType = allMode ? dominant.cellType : state.selectedCellType;
     const value = region.composition[focusCellType] || 0;
     const cellLayer = state.dataLayer === "cells";
-    const connections = cellLayer ? [] : getRegionConnections(region);
-    const connectionConfig = cellLayer ? null : connectivityConfig();
+    const geneLayer = state.dataLayer === "genes";
+    // Asked once per selection: the rows below, the headline, the support line and
+    // the per-class breakdown all read from this one snapshot.
+    const snapshot = geneLayer ? geneSnapshotFor(region) : null;
+    const gene = snapshot ? snapshot.active : null;
+    const geneMetric = snapshot ? snapshot.metric : state.geneMetric;
+    const connections = cellLayer || geneLayer ? [] : getRegionConnections(region);
+    const connectionConfig = cellLayer || geneLayer ? null : connectivityConfig();
     dom.focusLabel.textContent = cellLayer
       ? allMode
         ? `Dominant · ${dominant.cellType}`
         : state.selectedCellType
-      : connections.length
-        ? `Strongest ${connectionConfig.shortLabel} weight`
-        : connectionConfig.title;
+      : geneLayer
+        ? geneFocusLabel(gene, geneMetric)
+        : connections.length
+          ? `Strongest ${connectionConfig.shortLabel} weight`
+          : connectionConfig.title;
     dom.focusValue.textContent = cellLayer
       ? formatPercent(value)
-      : connections.length
-        ? connections[0].value.toFixed(3)
-        : "—";
+      : geneLayer
+        ? formatGeneValue(gene && gene.value, geneMetric)
+        : connections.length
+          ? connections[0].value.toFixed(3)
+          : "—";
     const focusColor = cellLayer
       ? colors[focusCellType] || "#61ddb2"
-      : connections.length
-        ? spectrumColor(spectrumPosition(connections[0].percentile), 1)
-        : connectionConfig.color;
+      : geneLayer
+        ? geneSwatchColour(gene)
+        : connections.length
+          ? spectrumColor(spectrumPosition(connections[0].percentile), 1)
+          : connectionConfig.color;
     dom.focusSwatch.style.background = focusColor;
     dom.focusSwatch.style.color = focusColor;
     dom.detailDataStatus.textContent = cellLayer
       ? state.dataStatus === "linked"
-        ? "Linked · scope-level composition"
+        ? state.compositionResolution === "region"
+          ? "Linked · per-region composition"
+          : "Linked · scope-level composition"
         : state.dataStatus === "observed"
           ? "Imported composition"
           : "Illustrative"
-      : `${connectionConfig.shortLabel} project matrix`;
+      : geneLayer
+        ? geneSupportLabel(gene)
+        : `${connectionConfig.shortLabel} project matrix`;
     const geometryStatus = region.geometryMapping?.status;
     dom.detailGeometryStatus.textContent = region.isGroup
       ? "Aggregate; no single parcel"
@@ -2008,7 +2712,9 @@
     dom.detailMappingBasis.textContent =
       region.geometryMapping?.basis || "No single anatomical crosswalk.";
 
-    if (!cellLayer) {
+    if (geneLayer) {
+      dom.rankBadge.textContent = geneRankBadge(region, gene);
+    } else if (!cellLayer) {
       dom.rankBadge.textContent = connections.length
         ? `${connectivity.metadata.regionCount}-region matrix`
         : "No connectivity";
@@ -2032,6 +2738,14 @@
     }
 
     dom.compositionBars.replaceChildren();
+    if (geneLayer) {
+      renderGeneRegionRows(region, snapshot);
+      renderGeneComposition(gene, geneMetric);
+      return;
+    }
+    renderGeneRegionRows(region, null);
+    if (dom.compositionTitle) dom.compositionTitle.textContent = "Cell-class composition";
+    if (dom.compositionCaption) dom.compositionCaption.textContent = "Relative proportion";
     const maxValue = Math.max(...state.cellTypes.map((cellType) => region.composition[cellType] || 0));
     state.cellTypes
       .map((cellType) => ({
@@ -2040,25 +2754,139 @@
       }))
       .sort((a, b) => b.value - a.value)
       .forEach(({ cellType, value: cellValue }) => {
-        const row = document.createElement("div");
-        row.className = `composition-row${
-          cellType === state.selectedCellType || (allMode && cellType === dominant.cellType)
-            ? " active"
-            : ""
-        }`;
-        row.innerHTML = `
-          <span>${cellType}</span>
-          <strong>${formatPercent(cellValue)}</strong>
-          <div class="bar-track"><div class="bar-fill" style="width:${
-            maxValue ? (cellValue / maxValue) * 100 : 0
-          }%"></div></div>
-        `;
+        const row = compositionRow(cellType, true);
+        if (
+          cellType === state.selectedCellType ||
+          (allMode && cellType === dominant.cellType)
+        ) {
+          row.classList.add("active");
+        }
+
+        const readout = document.createElement("strong");
+        readout.textContent = formatPercent(cellValue);
+        row.append(readout);
+
+        const track = document.createElement("div");
+        track.className = "bar-track";
+        const fill = document.createElement("div");
+        fill.className = "bar-fill";
+        fill.style.width = `${maxValue ? (cellValue / maxValue) * 100 : 0}%`;
+        track.append(fill);
+        row.append(track);
+
         row.addEventListener("click", () => selectCellType(cellType));
         dom.compositionBars.append(row);
       });
   }
 
+  // Round values worth a tick on the density ramp. mean is an expression level, whereas
+  // detection is a ratio, so they need different landmarks.
+  const GENE_DENSITY_TICKS = {
+    mean: [0.05, 0.1, 0.5, 1, 2],
+    detection: [0.1, 0.25, 0.5, 0.75],
+  };
+  const GENE_DENSITY_STEPS = 6;
+
+  function formatGeneLegendValue(value) {
+    return state.geneMetric === "detection"
+      ? `${Math.round(value * 100)}%`
+      : value.toFixed(2);
+  }
+
+  function renderGeneLegend() {
+    const scale = state.geneScale;
+    // The rows mirror the live selection on every call, so the list must be
+    // emptied even when there is nothing to draw -- otherwise the last selection
+    // lingers in the legend the next time the layer shows it.
+    dom.legendGeneRows.replaceChildren();
+    if (!scale) return;
+    const genes = state.genes || [];
+    dom.legendGenesMetric.textContent =
+      state.geneMetric === "detection" ? "Detection rate" : "Mean expression";
+    dom.legendDensityCaption.textContent =
+      state.geneRule === "donor_balanced"
+        ? "Lit density · donor-balanced"
+        : "Lit density · cell-weighted";
+
+    genes.forEach((gene) => {
+      const row = document.createElement("div");
+      row.className = "legend-gene-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "legend-gene-swatch";
+      swatch.style.background = gene.colour;
+      row.append(swatch);
+
+      const symbol = document.createElement("span");
+      symbol.className = "legend-gene-symbol";
+      symbol.textContent = gene.symbol;
+      row.append(symbol);
+
+      // Where this gene's top value sits on the shared 0-reference axis. Cross-gene
+      // comparison splits the channels deliberately: pattern by density, magnitude by
+      // this marker and the numbers, so the two never fight over one channel.
+      const abundance = document.createElement("span");
+      abundance.className = "legend-gene-abundance";
+      abundance.style.color = gene.colour;
+      const marker = document.createElement("i");
+      const reach = gene.max === null
+        ? 0
+        : Math.min(100, (gene.max / scale.reference) * 100);
+      marker.style.left = `${reach}%`;
+      abundance.append(marker);
+      abundance.title = gene.max === null
+        ? "no data"
+        : `peak ${formatGeneLegendValue(gene.max)} of ${formatGeneLegendValue(scale.reference)} corpus reference`;
+      row.append(abundance);
+
+      const range = document.createElement("span");
+      range.className = "legend-gene-range";
+      range.textContent = gene.min === null
+        ? "no data"
+        : `${formatGeneLegendValue(gene.min)}–${formatGeneLegendValue(gene.max)}`;
+      row.append(range);
+
+      dom.legendGeneRows.append(row);
+    });
+
+    if (!dom.legendDensityRamp.childElementCount) {
+      for (let step = 0; step < GENE_DENSITY_STEPS; step += 1) {
+        const cell = document.createElement("span");
+        cell.className = "legend-density-step";
+        const spacing = 8 - (step * 5.6) / (GENE_DENSITY_STEPS - 1);
+        cell.style.backgroundSize = `${spacing.toFixed(2)}px ${spacing.toFixed(2)}px`;
+        dom.legendDensityRamp.append(cell);
+      }
+    }
+
+    // Ticks are placed by the very same normalise() the cloud draws with, so the legend
+    // cannot drift from the picture. A piecewise scale has no one-line explanation.
+    dom.legendDensityTicks.replaceChildren();
+    GENE_DENSITY_TICKS[state.geneMetric].forEach((value) => {
+      if (value > scale.reference) return;
+      const tick = document.createElement("span");
+      tick.className = "legend-density-tick";
+      tick.dataset.value = String(value);
+      tick.style.left = `${GenePointCloud.normalise(value, scale) * 100}%`;
+      tick.textContent = formatGeneLegendValue(value);
+      dom.legendDensityTicks.append(tick);
+    });
+    const fold = document.createElement("span");
+    fold.className = "legend-density-breakpoint";
+    fold.style.left = `${GenePointCloud.D_LOW * 100}%`;
+    fold.title = `slope folds at ${formatGeneLegendValue(scale.breakpoint)}`;
+    dom.legendDensityTicks.append(fold);
+  }
+
   function findRegionAt(x, y) {
+    // In the genes layer the whole lit cloud is the target, not a disc around each
+    // region's anchor: a parcel's projection can span over 100px, so the disc left most
+    // of a visibly lit area unclickable. Fall through to the discs when the grid has
+    // nothing there, so the markers stay reachable.
+    if (state.dataLayer === "genes") {
+      const hit = geneHitAt(x, y);
+      if (hit && hit.region) return hit.region;
+    }
     return [...state.regionProjection]
       .sort((a, b) => b.z - a.z)
       .find((point) => Math.hypot(point.x - x, point.y - y) <= point.radius)?.region;
@@ -2350,6 +3178,7 @@
     state.linkedRegionCells = null;
     state.linkedScopeLabel = null;
     state.linkedCellStats = null;
+    state.compositionResolution = null;
     state.cellTypes = [...source.cellTypes];
     state.selectedCellType = ALL_CELL_TYPES;
     state.dataStatus = source.metadata.compositionProvenance;
@@ -2366,9 +3195,14 @@
 
   // Apply a DigitalBrain Data Explorer scope: light up only the sampled
   // Brodmann regions (identity crosswalk on acronym), size them by real
-  // per-region cell counts, and overlay the scope-level (marginal) 7-class
-  // composition. Per-region composition is intentionally scope-level, not
-  // region-resolved, because the source data only carries marginals.
+  // per-region cell counts, and overlay the composition.
+  //
+  // The bridge sends both a scope-level marginal and, when the donor records allow
+  // it, a per-region composition derived from the donor mix. The per-region one is
+  // preferred: repeating one scope average across every parcel made the panel look
+  // broken ("the bars never change") and made the abundance filter all-or-nothing.
+  // state.compositionResolution records which one is on screen so the panel can
+  // label it honestly.
   function applyLinkedScope(payload) {
     if (!payload) return;
     const known = new Set(state.regions.map((region) => region.acronym));
@@ -2398,27 +3232,37 @@
     state.cellTypes = scopeCellTypes;
     state.selectedCellType = ALL_CELL_TYPES;
 
-    const rawComposition = payload.composition || {};
-    const total = scopeCellTypes.reduce(
-      (sum, cellType) => sum + (Number(rawComposition[cellType]) || 0),
-      0,
-    );
-    const normalized = Object.fromEntries(
-      scopeCellTypes.map((cellType) => [
-        cellType,
-        total > 0 ? (Number(rawComposition[cellType]) || 0) / total : 0,
-      ]),
-    );
+    // Restricted to this scope's vocabulary and renormalized, so every breakdown
+    // sums to 1 over the classes the controls actually offer.
+    const overCellTypes = (raw) => {
+      if (!raw) return null;
+      const total = scopeCellTypes.reduce(
+        (sum, cellType) => sum + (Number(raw[cellType]) || 0),
+        0,
+      );
+      if (!(total > 0)) return null;
+      return Object.fromEntries(
+        scopeCellTypes.map((cellType) => [cellType, (Number(raw[cellType]) || 0) / total]),
+      );
+    };
+
+    const scopeLevel =
+      overCellTypes(payload.composition || {}) ||
+      Object.fromEntries(scopeCellTypes.map((cellType) => [cellType, 0]));
+    const perRegion = payload.regionComposition || {};
+    let resolvedRegions = 0;
     for (const region of state.regions) {
-      if (active.has(region.acronym)) {
-        region.composition = { ...normalized };
-      }
+      if (!active.has(region.acronym)) continue;
+      const resolved = overCellTypes(perRegion[region.acronym]);
+      if (resolved) resolvedRegions += 1;
+      region.composition = resolved || { ...scopeLevel };
     }
 
     state.linkedActiveRegions = active;
     state.linkedRegionCells = payload.regionCells || {};
     state.linkedScopeLabel = payload.scopeLabel || null;
     state.linkedCellStats = payload.cellStats || null;
+    state.compositionResolution = resolvedRegions > 0 ? "region" : "scope";
     state.dataStatus = "linked";
     state.dataLayer = "cells";
 
@@ -2436,7 +3280,7 @@
     showToast(
       `Linked to “${payload.scopeLabel || "selection"}”: ${active.size} sampled region${
         active.size === 1 ? "" : "s"
-      } · scope-level composition.`,
+      } · ${state.compositionResolution === "region" ? "per-region" : "scope-level"} composition.`,
     );
   }
 
@@ -2483,7 +3327,7 @@
       acceptedRows += 1;
     });
 
-    if (!acceptedRows) throw new Error("No rows matched the displayed regions and cell classes.");
+    if (!acceptedRows) throw new Error("No rows matched the displayed regions and cell types.");
 
     for (const region of state.regions) {
       const values = imported.get(region.id);
@@ -2513,7 +3357,7 @@
     }
     const caveats = [];
     if (unknownRegions.size) caveats.push(`${unknownRegions.size} unknown region labels`);
-    if (unknownCellTypes.size) caveats.push(`${unknownCellTypes.size} unknown cell classes`);
+    if (unknownCellTypes.size) caveats.push(`${unknownCellTypes.size} unknown cell types`);
     showToast(
       `Loaded ${acceptedRows} rows for ${imported.size} regions${
         caveats.length ? `; skipped ${caveats.join(" and ")}` : ""
@@ -2531,7 +3375,6 @@
   assignRegionPositions();
   buildCellTypeControls();
   syncDataLayerControls();
-  selectAnatomyStyle("boundaries");
   resizeCanvas();
   updateRangeBackground();
   setAnatomyTransform();
@@ -2699,16 +3542,14 @@
   dom.shellToggle.addEventListener("change", () => {
     state.showShell = dom.shellToggle.checked;
   });
+  dom.envelopeToggle.addEventListener("change", () => {
+    state.showEnvelopes = dom.envelopeToggle.checked;
+  });
   dom.rotateToggle.addEventListener("change", () => {
     state.autoRotate = dom.rotateToggle.checked;
   });
   document.querySelectorAll("[data-layer]").forEach((button) => {
     button.addEventListener("click", () => selectDataLayer(button.dataset.layer));
-  });
-  document.querySelectorAll("[data-anatomy-style]").forEach((button) => {
-    button.addEventListener("click", () =>
-      selectAnatomyStyle(button.dataset.anatomyStyle),
-    );
   });
   dom.connectivityFilter.addEventListener("input", () => {
     state.connectivityPercentile = Number(dom.connectivityFilter.value);
@@ -2761,6 +3602,187 @@
     },
     clear() {
       clearLinkedScope();
+    },
+
+    // Gene expression layer. The host hands over an ordered array of genes, the
+    // aggregation rule and metric they were computed under, and the density
+    // calibration to read them against:
+    //
+    //   { metric, rule, active, scale: { breakpoint, reference, lowKnots },
+    //     genes: [{ symbol, colour, values: { acronym: n }, support: { acronym: cells } }] }
+    //
+    // The order is load-bearing: it fixes each gene's offset angle. The colour comes
+    // from the host because the chips and the cloud can only have one source of truth.
+    // An acronym absent from a gene's values means "no data" and stays out of both the
+    // colour range and the canvas.
+    applyGeneValues(payload) {
+      const scale = payload && payload.scale;
+      // gene_atlas_web/ is gitignored, so index.json is a deployment artefact and a
+      // stale payload against new code is a real scenario. Refuse it loudly: defaulting
+      // to some range would render every density quietly wrong with nothing on screen
+      // to say so.
+      if (
+        !scale
+        || typeof scale.breakpoint !== "number"
+        || typeof scale.reference !== "number"
+        || !Array.isArray(scale.lowKnots)
+        || scale.lowKnots.length !== 13
+      ) {
+        throw new Error(
+          `applyGeneValues needs a densityScale for ${(payload && payload.rule) || "?"}/`
+          + `${(payload && payload.metric) || "?"}`,
+        );
+      }
+      if (payload.metric) {
+        state.geneMetric = payload.metric === "detection" ? "detection" : "mean";
+      }
+      if (payload.rule) {
+        state.geneRule = payload.rule === "donor_balanced" ? "donor_balanced" : "cell_weighted";
+      }
+      // Which gene the markers, the legend range and the detail headline follow. Absent
+      // in an older payload, in which case activeGene() falls back to the first.
+      state.geneActive = payload.active || null;
+      state.geneScale = scale;
+      state.genes = (payload.genes || []).map((gene) => {
+        const values = gene.values || {};
+        const support = gene.support || {};
+        const byLabel = GenePointCloud.aggregateByLabel(
+          { values, support }, labelToRegions, anatomy.labels.length,
+        );
+        // Measured on the merged label values, which is what the cloud draws, so the
+        // legend row and the summary describe the same numbers the viewer is looking at.
+        let min = null;
+        let max = null;
+        byLabel.hasValue.forEach((present, labelIndex) => {
+          if (!present) return;
+          const value = byLabel.values[labelIndex];
+          if (min === null || value < min) min = value;
+          if (max === null || value > max) max = value;
+        });
+        return { symbol: gene.symbol, colour: gene.colour, values, support, byLabel, min, max };
+      });
+      // The envelope fill fights the expression cloud, so the first entry into
+      // the genes layer defaults it off. One-shot: afterwards the toggle is
+      // entirely the user's, and clearGeneValues does not re-arm the default.
+      if (!state.geneEnvelopeDefaultApplied) {
+        state.geneEnvelopeDefaultApplied = true;
+        state.showEnvelopes = false;
+        if (dom.envelopeToggle) dom.envelopeToggle.checked = false;
+      }
+      selectDataLayer("genes");
+      return this.geneSummary();
+    },
+
+    clearGeneValues() {
+      state.genes = null;
+      state.geneScale = null;
+      state.geneActive = null;
+      selectDataLayer("cells");
+      return this.geneSummary();
+    },
+
+    // The atlas has no access to the gene payloads, so the host injects a lookup:
+    // provider(acronym) -> { metric, rule, active, genes: [{ symbol, colour, value,
+    // support, detailAvailable, rows }] } with rows = [{ cellType, mean, detection,
+    // cells }] on the active gene only. An absent class means no data, never zero;
+    // a gene whose value is null was not measured in that region.
+    setGeneDetailProvider(provider) {
+      state.geneDetailProvider = typeof provider === "function" ? provider : null;
+      if (state.selectedRegion && state.dataLayer === "genes") {
+        updateDetail(state.selectedRegion, { preserveConnection: true });
+      }
+    },
+
+    // Opens the detail panel for an acronym, the same path a canvas click takes.
+    selectRegion(acronym) {
+      const region = state.regions.find((candidate) => candidate.acronym === acronym);
+      if (!region) return false;
+      updateDetail(region);
+      return true;
+    },
+
+    // The colour this atlas paints a cell class with, curated for the baseline
+    // classes and hash-derived for the rest. Exposed so a host-side class list can
+    // reuse the legend's palette instead of inventing a second one that would
+    // disagree with the canvas.
+    cellTypeColour,
+
+    // Read-only view used by the gene search row for its legend and "n regions
+    // with data" counter, and by the tests.
+    geneSummary() {
+      const range = getGeneRange();
+      return {
+        layer: state.dataLayer,
+        metric: state.geneMetric,
+        rule: state.geneRule,
+        regions:
+          state.dataLayer === "genes"
+            ? getVisibleRegions().map((region) => region.acronym)
+            : [],
+        min: range.min,
+        max: range.max,
+        // One entry per gene, in the order the host gave them. min/max are measured on
+        // the aggregated label values, which is what the cloud actually draws, so a
+        // legend row describes the same numbers the viewer is looking at.
+        genes: (state.genes || []).map((gene) => ({
+          symbol: gene.symbol,
+          colour: gene.colour,
+          min: gene.min,
+          max: gene.max,
+        })),
+      };
+    },
+
+    // Which gene and region a screen position belongs to in the cloud. The tooltip and
+    // the click path both go through here, so a host wanting "what am I pointing at"
+    // gets the same answer the atlas acts on.
+    geneHitAt(x, y) {
+      return geneHitAt(x, y);
+    },
+
+    // Read-only view of the hit grid, for the tests and for diagnosing "lit but not
+    // clickable" reports.
+    geneHitReport() {
+      const genesSeen = [];
+      let sample = null;
+      if (geneHitGrid.label) {
+        for (let cell = 0; cell < geneHitGrid.label.length; cell += 1) {
+          if (geneHitGrid.label[cell] === -1) continue;
+          const geneIndex = geneHitGrid.gene[cell];
+          if (!genesSeen.includes(geneIndex)) genesSeen.push(geneIndex);
+          if (!sample) {
+            const column = cell % geneHitGrid.cols;
+            const row = Math.floor(cell / geneHitGrid.cols);
+            sample = {
+              x: column * GENE_HIT_CELL + GENE_HIT_CELL / 2,
+              y: row * GENE_HIT_CELL + GENE_HIT_CELL / 2,
+            };
+          }
+        }
+      }
+      return { filled: geneHitGrid.filled, cell: GENE_HIT_CELL, genesSeen, sample };
+    },
+
+    // Whether an acronym exists in the catalogue and can be placed in 3D.
+    knowsRegion(acronym) {
+      return state.regions.some(
+        (region) => region.acronym === acronym && region.hasAnatomy,
+      );
+    },
+
+    // The region identities this atlas knows, for a host-side control that has to name
+    // regions the gene payloads only identify by acronym. hasAnatomy separates the
+    // parcels the canvas can actually place from the ones it cannot, which is the
+    // difference between a bar the reader can click through to 3D and one they cannot.
+    regionCatalogue() {
+      return state.regions
+        .filter((region) => !region.isGroup)
+        .map((region) => ({
+          acronym: region.acronym,
+          name: region.name,
+          group: region.group,
+          hasAnatomy: Boolean(region.hasAnatomy),
+        }));
     },
   };
 

@@ -58,7 +58,7 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 16px 24px;
-    padding: 20px 24px;
+    padding: 20px 18px;
     border-bottom: 1px solid var(--line);
     background: var(--panel-strong);
 }
@@ -97,8 +97,118 @@ body {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
+
+/* Layer switch in the header row. Kept as a segmented control rather than four
+   loose pills so the mutually exclusive choice, and which one is current, stay
+   legible next to the two real buttons.
+
+   Overrides two things from the atlas stylesheet, which loads after this file
+   (hence the #atlasSection prefix, same trick as the type rules below):
+
+   - display: the atlas base is `grid` with a hard-coded three-column template,
+     written when there were only three layers, so the gene layer's fourth button
+     dropped onto a second row. Switching to a nowrap flex row makes the column
+     count irrelevant -- a fifth layer cannot re-introduce the bug, and each
+     button sizes to its own label instead of all four padding out to the width
+     of "Gene expression".
+   - type size: 8px suits a 300px drawer, not a header row. */
+#atlasSection .atlas-embed-layer-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 2px;
+    border-radius: 10px;
+}
+
+#atlasSection .atlas-embed-layer-tabs button {
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 7px 11px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* Status capsule, now sharing the header row with the layer switch. The atlas
+   rewrites its text for every scope change -- in the cell-profiles layer the label
+   becomes "Linked · <collection> · <dataset> · <donor>", which grows without bound
+   and used to push Atlas settings onto a second row.
+
+   So: cap the capsule, and scroll the label instead of widening it. The cap tracks
+   the viewport so a wide window still shows the whole label without scrolling.
+   The region count keeps its full width (flex: 0 0 auto) -- it is the part worth
+   reading, so the descriptive half is what gives way.
+
+   The dot and the count are unshrinkable, so the cap comes off the label alone:
+   about 69px of label at a 1118px viewport, less on narrower ones. Below a readable
+   width the label is hidden outright (see is-too-narrow) rather than scrolled
+   through a sliver. Hiding can only make the row narrower, so unlike widening the
+   cap it cannot bring the wrapping back. */
+#atlasSection .atlas-embed-meta .dataset-status {
+    max-width: clamp(180px, 22vw, 320px);
+}
+
+#atlasSection .atlas-embed-meta .dataset-status > span:not(.status-dot) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#atlasSection .atlas-embed-meta .dataset-status > span.is-too-narrow {
+    display: none;
+}
+
+#atlasSection .atlas-embed-meta .dataset-status > strong {
+    flex: 0 0 auto;
+}
+
+/* The label must be the ONLY shrinkable item in the capsule: a 7px status indicator
+   shipped with the default flex-shrink: 1 and min-width: auto (0 for an empty
+   element), so once the capsule was capped the dot was squeezed -- measured rendering
+   at 4.1px, deformed into an ellipse by its own border-radius. The count gets the
+   same treatment because it is the part worth reading. */
+#atlasSection .atlas-embed-meta .dataset-status > .status-dot {
+    flex: 0 0 auto;
+}
+
+/* The scroll moves an injected track with a transform, which the compositor handles
+   without laying anything out again. The first attempt animated text-indent on the
+   label instead; that is a layout property, so every frame re-ran the flex layout of
+   the whole capsule -- visible as jitter, and it perturbed the dot through the label's
+   intrinsic width. A transform cannot reach a sibling.
+
+   The track has to be injected from JS because the atlas replaces the capsule's
+   children with innerHTML on every update, and it is re-injected by the same observer
+   that re-measures. app.js only injects it when the text actually overflows, so a
+   label that fits stays a plain text node and the ellipsis above still applies -- an
+   inline-block track would be replaced wholesale by a bare ellipsis instead. */
+#atlasSection .atlas-embed-meta .marquee-track {
+    display: inline-block;
+    white-space: nowrap;
+}
+
+#atlasSection .atlas-embed-meta .marquee-track.is-marquee {
+    animation: capsuleMarquee var(--marquee-duration, 10s) linear infinite;
+}
+
+#atlasSection .atlas-embed-meta .dataset-status:hover .marquee-track.is-marquee {
+    animation-play-state: paused;
+}
+
+/* linear, with the pauses written into the keyframes rather than borrowed from an
+   easing curve: ease-in-out spends most of the cycle at the two ends and crosses the
+   middle fast, which reads as the text jumping to its end rather than scrolling. */
+@keyframes capsuleMarquee {
+    0%, 8% { transform: translateX(0); }
+    46%, 54% { transform: translateX(var(--marquee-shift, 0)); }
+    92%, 100% { transform: translateX(0); }
+}
+
+/* prefers-reduced-motion is handled in app.js by simply not injecting the track: the
+   label then stays a plain text node and falls back to the ellipsis above, with the
+   full text on hover. A CSS override here would be a rule that can never match. */
 
 .atlas-embed-head .summary-strip {
     margin: 0;
@@ -350,7 +460,8 @@ body {
     font-size: 9px;
 }
 
-#atlasSection .composition-section .section-heading span {
+#atlasSection .composition-section .section-heading span,
+#atlasSection .gene-region-section .section-heading span {
     font-size: 8px;
 }
 
@@ -415,6 +526,65 @@ body {
     background: var(--panel-strong);
     border-radius: 20px;
     border: 1px solid var(--line);
+    position: relative;
+}
+
+/* Gene layer scope lock. The three filters cannot narrow a cross-study merge, so
+   the gene layer disables them and explains why. The explanation is a hover
+   tooltip, never an inline paragraph: as a flex child it stole width and squeezed
+   the selects flat. A small badge on the row's edge makes the tooltip findable. */
+.controls.is-scope-locked::after {
+    content: "\24D8  Global scope";
+    position: absolute;
+    top: 0;
+    right: 20px;
+    transform: translateY(-50%);
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--accent-strong);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    cursor: help;
+    box-shadow: 0 6px 16px rgba(31, 59, 78, 0.18);
+}
+
+.scope-note {
+    /* Out of the flex flow so it never resizes the selects; revealed on hover. */
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 20px;
+    z-index: 30;
+    max-width: 360px;
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 14px 34px rgba(31, 59, 78, 0.16);
+    color: var(--muted);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    pointer-events: none;
+}
+
+.scope-note strong {
+    color: var(--text);
+}
+
+/* Show it while the cursor is over the locked filter row (or a select regains
+   focus). Gated on the armed note so it never appears in the cell layer. */
+.controls.is-scope-locked:hover .scope-note:not([hidden]),
+.controls.is-scope-locked:focus-within .scope-note:not([hidden]) {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
 }
 
 .scope-banner {
@@ -642,18 +812,10 @@ select:focus {
     cursor: pointer;
 }
 
-/* One-time Atlas layer tour: a pulse invites opening settings, then a
-   coach-mark popover walks through each layer button. */
-.atlas-settings-pulse {
-    animation: atlasSettingsPulse 1.8s ease-out infinite;
-}
-
-@keyframes atlasSettingsPulse {
-    0% { box-shadow: 0 0 0 0 rgba(20, 108, 148, 0.5); }
-    70% { box-shadow: 0 0 0 9px rgba(20, 108, 148, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(20, 108, 148, 0); }
-}
-
+/* One-time Atlas layer tour: a coach-mark popover walks through each layer
+   button the first time the atlas scrolls into view. (The pulse that used to
+   invite opening the settings drawer is gone along with it -- the layer switch
+   is in the header row now, so there is nothing to coax open.) */
 .atlas-tour-target {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
@@ -772,13 +934,6 @@ select:focus {
     font-weight: 600;
     padding: 5px 12px;
     cursor: pointer;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .atlas-settings-pulse {
-        animation: none;
-        box-shadow: 0 0 0 2px rgba(20, 108, 148, 0.55);
-    }
 }
 
 /* View swap: one content region at a time (atlas is the default). */

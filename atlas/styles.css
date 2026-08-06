@@ -389,6 +389,119 @@
   font-size: 9px;
 }
 
+/* Selection size beside a section title. The class list is collapsed to five rows
+   by the host, so "how many are ticked" has to be readable without expanding it. */
+.section-count {
+  margin-left: 6px;
+  color: var(--accent-strong, var(--accent));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The notes above this list end in prose; the list starts in pills. Given the same
+   gap a heading gets, so the first row is not read as the end of the sentence. */
+.gene-cell-type-list {
+  margin-top: 12px;
+}
+
+/* Gene layer: the same pill as the cell-profiles list, but a checkbox subset
+   instead of a single choice, plus the class's own value for the active gene.
+   Four columns and a spanning bar row, so the tick, the swatch, the name and the
+   figure stay on one baseline and the bar reads as a ranking column. */
+.cell-type-check {
+  grid-template-columns: 12px 7px minmax(0, 1fr) auto;
+  row-gap: 5px;
+  cursor: pointer;
+}
+
+.cell-type-check input[type="checkbox"] {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  accent-color: var(--class-colour, var(--accent));
+  cursor: inherit;
+}
+
+.cell-type-check .cell-type-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-type-check.active {
+  border-color: color-mix(in srgb, var(--class-colour, var(--accent)) 34%, transparent);
+  background: color-mix(in srgb, var(--class-colour, var(--accent)) 9%, transparent);
+}
+
+/* Ticked but nothing measured for this gene, and region-only genes where the
+   whole control is inert: dimmed rather than hidden, so the vocabulary stays
+   complete and the absence is visible. */
+.cell-type-check.empty {
+  opacity: 0.5;
+}
+
+.cell-type-check.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cell-type-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+}
+
+.cell-type-meta small {
+  color: var(--quiet);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-type-check.active .cell-type-meta small {
+  color: #cfe3e2;
+}
+
+/* Revealed on hover or keyboard focus: a permanent "only" on 31 rows would
+   compete with the class names for a panel this narrow. */
+.cell-type-solo {
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong, rgba(255, 255, 255, 0.18));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 8.5px;
+  letter-spacing: 0.03em;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.cell-type-check:hover .cell-type-solo,
+.cell-type-solo:focus-visible {
+  opacity: 1;
+}
+
+.cell-type-solo:hover {
+  border-color: var(--class-colour, var(--accent));
+  color: var(--text);
+}
+
+.cell-type-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.cell-type-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--class-colour, var(--accent));
+  opacity: 0.82;
+}
+
 .control-section.disabled {
   opacity: 0.43;
 }
@@ -452,9 +565,6 @@
   box-shadow: var(--shadow);
 }
 
-#atlasSearchSection {
-  position: relative;
-}
 
 .search-result .search-result-topline {
   display: flex;
@@ -626,10 +736,6 @@
   color: var(--accent-strong);
 }
 
-.anatomy-style-tabs {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .control-section[hidden] {
   display: none !important;
 }
@@ -638,6 +744,7 @@
 .mapping-key[hidden],
 #legendConnectivity[hidden],
 .composition-section[hidden],
+.gene-region-section[hidden],
 .connectivity-detail-section[hidden],
 .region-annotation-section[hidden],
 .connection-insight-section[hidden],
@@ -804,44 +911,6 @@
   background: radial-gradient(circle, transparent 54%, rgba(3, 9, 14, 0.5) 100%);
 }
 
-.geometry-status {
-  position: absolute;
-  z-index: 4;
-  top: 62px;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 9px;
-  border: 1px solid rgba(240, 196, 119, 0.18);
-  border-radius: 999px;
-  background: rgba(7, 16, 25, 0.76);
-  color: #9eaaab;
-  font-size: 8px;
-  white-space: nowrap;
-  transform: translateX(-50%);
-  backdrop-filter: blur(10px);
-  pointer-events: none;
-}
-
-.geometry-status span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 8px rgba(240, 196, 119, 0.45);
-}
-
-.geometry-status.available {
-  border-color: rgba(83, 215, 174, 0.2);
-  color: #a9c7c1;
-}
-
-.geometry-status.available span {
-  background: var(--accent);
-  box-shadow: 0 0 8px rgba(83, 215, 174, 0.5);
-}
-
 .viewer-toolbar {
   position: absolute;
   z-index: 4;
@@ -857,6 +926,43 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* The atlas search moved out of the settings drawer into the toolbar, centred
+   between the view presets and the zoom actions. The toolbar is pointer-events:
+   none, so the search has to opt back in like the tab groups do. */
+.viewer-search {
+  position: relative;
+  flex: 0 1 300px;
+  min-width: 180px;
+  margin: 0 auto;
+  pointer-events: auto;
+}
+
+.viewer-search .search-field {
+  background: rgba(7, 16, 25, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.viewer-search .search-field input {
+  padding: 7px 0;
+}
+
+/* Both flyouts anchor to the search container and float over the canvas rather
+   than growing the toolbar. The focus card was designed against the drawer's
+   own background, so as an overlay it needs an opaque base under its gradient. */
+.viewer-search .function-focus {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 6px;
+  background:
+    linear-gradient(135deg, rgba(137, 83, 218, 0.13), rgba(55, 213, 194, 0.06)),
+    #0e1b25;
+  box-shadow: var(--shadow);
 }
 
 .mode-tabs,
@@ -1356,6 +1462,119 @@
   font-size: 7px;
 }
 
+/* Gene expression legend. One row per gene so a viewer can read each gene's own
+   measured range, plus a tick-marked density ramp: the density scale is piecewise, so
+   it cannot be explained by a caption and has to be shown. */
+.legend-gene-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.legend-gene-row {
+  display: grid;
+  grid-template-columns: 9px minmax(34px, auto) 1fr auto;
+  align-items: center;
+  gap: 6px;
+  color: #becfd2;
+  font-size: 7.5px;
+}
+
+.legend-gene-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.legend-gene-symbol {
+  color: #dcecef;
+  font-weight: 600;
+}
+
+/* The abundance marker answers "is this gene high or low overall", which density alone
+   cannot say once every gene is stretched over the same 0-1 density range. Shared
+   0-reference axis, so the markers of two genes are directly comparable. */
+.legend-gene-abundance {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(150, 185, 201, 0.14);
+}
+
+.legend-gene-abundance i {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 7px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: currentcolor;
+}
+
+.legend-gene-range {
+  color: #8fa6ad;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-density {
+  position: relative;
+  margin-top: 9px;
+}
+
+.legend-density-ramp {
+  display: flex;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 2px;
+  background-color: #1b2f35;
+}
+
+/* Density is shown, not described: each step packs its dot lattice tighter than the one
+   before, so the ramp reads sparse on the left and dense on the right. The step widths
+   are equal; only the spacing changes. */
+.legend-density-step {
+  flex: 1 1 0;
+  background-image: radial-gradient(circle at center, rgba(143, 242, 201, 0.95) 0.9px, transparent 1.1px);
+  background-repeat: repeat;
+}
+
+.legend-density-ticks {
+  position: relative;
+  height: 11px;
+  margin-top: 2px;
+}
+
+.legend-density-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: #536a73;
+  font-size: 6.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.legend-density-tick::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 1px;
+  height: 3px;
+  background: rgba(150, 185, 201, 0.4);
+}
+
+/* The slope folds at the breakpoint by design (70% of the density goes to the bottom
+   90% of values), so the fold is marked rather than smoothed over. */
+.legend-density-breakpoint {
+  position: absolute;
+  top: -9px;
+  width: 1px;
+  height: 9px;
+  background: rgba(141, 198, 244, 0.55);
+}
+
 .legend-key {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1481,7 +1700,15 @@
   border-radius: 50%;
 }
 
+.mapping-key i.coarse {
+  width: 7px;
+  height: 7px;
+  border-color: #b6d7cf;
+}
+
 .mapping-key i.proxy {
+  width: 6px;
+  height: 6px;
   border-color: #8dc6f4;
   border-style: dashed;
 }
@@ -1682,6 +1909,7 @@
 }
 
 .composition-section,
+.gene-region-section,
 .member-regions-section,
 .connectivity-detail-section,
 .region-annotation-section,
@@ -1696,7 +1924,14 @@
   margin-bottom: 15px;
 }
 
+/* The rows carry their own top margin, so the heading only needs the remainder
+   to land on the same rhythm as the composition section below it. */
+.gene-region-section .section-heading {
+  margin-bottom: 4px;
+}
+
 .composition-section h3,
+.gene-region-section h3,
 .member-regions-section h3,
 .connectivity-detail-section h3,
 .region-annotation-section h3,
@@ -1916,7 +2151,8 @@
   color: var(--accent-strong);
 }
 
-.composition-section .section-heading span {
+.composition-section .section-heading span,
+.gene-region-section .section-heading span {
   color: var(--quiet);
   font-size: 7px;
   font-weight: 400;
@@ -1929,16 +2165,169 @@
   gap: 11px;
 }
 
+/* Gene layer: every selected gene's value in the selected region, in chip order.
+   Same grid as a composition row so the two sections read as one panel, but each
+   row is a button -- clicking it promotes that gene to active. */
+.gene-region-rows {
+  display: grid;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.gene-region-row {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gene-region-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: #d9e6e5;
+}
+
+/* The gene the headline and the per-class breakdown below are about. Tinted with
+   the gene's own colour, so the row, the chip, the cloud and the markers agree. */
+.gene-region-row.active {
+  border-color: color-mix(in srgb, var(--gene-colour, var(--accent)) 40%, transparent);
+  background: color-mix(in srgb, var(--gene-colour, var(--accent)) 10%, transparent);
+  color: var(--text);
+}
+
+.gene-region-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gene-colour, var(--accent));
+  box-shadow: 0 0 7px var(--gene-colour, var(--accent));
+}
+
+.gene-region-symbol {
+  overflow: hidden;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gene-region-value {
+  color: #d8e7e5;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gene-region-rank {
+  color: var(--quiet);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gene-region-track {
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #1c2b34;
+}
+
+.gene-region-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--gene-colour, var(--accent));
+  opacity: 0.85;
+}
+
+/* Not measured in this region. Dimmed, italic and without a bar so it cannot be
+   read as a measured zero. */
+.gene-region-row.missing {
+  color: #5c6874;
+}
+
+.gene-region-row.missing .gene-region-value {
+  color: #5c6874;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.gene-region-row.missing .gene-region-swatch {
+  box-shadow: none;
+  opacity: 0.45;
+}
+
+/* Every row owns its class colour (--class-colour), so the dot, the bar and the
+   legend/markers all speak the same palette. A grey row means "no data", never
+   "a small value". */
 .composition-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 10px;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  gap: 5px 8px;
+  align-items: center;
   color: var(--muted);
   font-size: 8px;
 }
 
+.composition-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--class-colour, #607b82);
+}
+
+.composition-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composition-row.active {
   color: #d8e7e5;
+}
+
+.composition-row.active .composition-dot {
+  box-shadow: 0 0 7px var(--class-colour, var(--accent));
+}
+
+/* Gene layer: a class with no cells in this region. Dimmed and without a bar, so
+   it cannot be mistaken for a measured value of zero. */
+.composition-row.composition-missing {
+  color: #5c6874;
+}
+
+.composition-row.composition-missing .composition-dot {
+  background: #3a4752;
+  box-shadow: none;
+}
+
+.composition-row.composition-missing strong {
+  font-style: italic;
+  font-weight: 400;
+}
+
+.composition-row.composition-missing .bar-track {
+  background: #16212a;
+}
+
+/* Gene layer: a full-width sentence instead of a value row, used when there is no
+   per-class tier to show at all. */
+.composition-row.composition-notice {
+  grid-template-columns: minmax(0, 1fr);
+  color: #8aa0ad;
+  line-height: 1.5;
+}
+
+.composition-row.composition-notice .composition-label {
+  overflow: visible;
+  white-space: normal;
 }
 
 .bar-track {
@@ -1953,13 +2342,14 @@
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background: #607b82;
+  background: var(--class-colour, #607b82);
+  opacity: 0.76;
   transition: width 320ms ease;
 }
 
 .composition-row.active .bar-fill {
-  background: linear-gradient(90deg, var(--accent-deep), var(--accent));
-  box-shadow: 0 0 12px rgba(83, 215, 174, 0.28);
+  opacity: 1;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--class-colour, var(--accent)) 45%, transparent);
 }
 
 .context-section dl {
@@ -2258,6 +2648,1027 @@
   .interaction-hint {
     display: none;
   }
+}
+
+/* Gene expression layer -----------------------------------------------------
+   The search row is the only chrome the gene layer adds. It sits between the
+   atlas header and the stage, inside .atlas-embed, so it inherits the dark
+   palette declared there rather than the light page one. */
+
+.gene-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(6, 14, 21, 0.35);
+}
+
+.gene-search-row[hidden] {
+  display: none !important;
+}
+
+.gene-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Wide enough for the three-line result rows below it to look deliberate rather
+     than cramped, but still shrinkable so the chips keep their room on the row. */
+  flex: 1 1 330px;
+  min-width: 240px;
+  max-width: 430px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(1, 8, 14, 0.45);
+}
+
+.gene-search-field svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--quiet);
+  stroke-width: 1.8;
+}
+
+.gene-search-field input {
+  width: 100%;
+  padding: 9px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.gene-search-field input::placeholder {
+  color: #50656e;
+}
+
+.gene-search-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.gene-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  /* Allowed to outgrow the input: a gene name plus its identifiers does not fit in
+     the width a search box wants, and wrapping them would cost a line per row. */
+  width: max(100%, 430px);
+  max-height: 320px;
+  margin-top: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #0e1b25;
+  box-shadow: var(--shadow);
+}
+
+.gene-search-results[hidden] {
+  display: none !important;
+}
+
+/* Three lines, in decreasing order of what they settle: which gene (symbol + the
+   cell class carrying it), what it is (HGNC name), and the identifiers you would
+   otherwise have to look up elsewhere. */
+.gene-search-option {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(150, 185, 201, 0.08);
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gene-search-option:last-child {
+  border-bottom: 0;
+}
+
+.gene-search-option:hover {
+  background: rgba(83, 215, 174, 0.12);
+}
+
+.gene-option-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gene-option-symbol {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.gene-search-option:hover .gene-option-symbol {
+  color: var(--accent-strong);
+}
+
+/* The cell class this gene peaks in, coloured with the atlas palette so the same
+   class reads the same here, in the class filter and on the canvas. */
+.gene-option-peak {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 8.5px;
+}
+
+.gene-option-peak i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.gene-option-name {
+  overflow: hidden;
+  color: #b6c8ce;
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gene-option-facts {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.gene-option-facts > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Not decoration: this is the field that decides whether the Cell class filter will
+   be usable once the gene is picked. */
+.gene-option-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid rgba(83, 215, 174, 0.3);
+  border-radius: 5px;
+  color: var(--accent-strong);
+  font-size: 7.5px;
+  letter-spacing: 0.03em;
+}
+
+/* Why this row is in the list when the query did not match its symbol: the field and
+   the text that actually matched, so an id or name hit does not read as an unrelated
+   gene the search threw in. margin-right keeps it beside the symbol and leaves the
+   peak class on the right edge. */
+.gene-option-why {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(140, 190, 255, 0.1);
+  color: #9fc3dd;
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The list is capped; this says by how much rather than letting the cut be silent. */
+.gene-search-more {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.gene-search-empty {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.gene-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* --gene-colour is set per chip by gene-atlas-view.js so several genes stay
+   distinguishable; the active one is filled with it. */
+.gene-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--gene-colour, var(--line-strong));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--gene-colour, var(--text));
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.gene-chip.active {
+  background: var(--gene-colour, var(--accent));
+  color: #04121a;
+  font-weight: 650;
+}
+
+.gene-chip-remove {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.gene-chip-remove:hover {
+  opacity: 1;
+}
+
+.gene-switches {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* One track per visible option, unlike the fixed three-way layer tabs. The aggregation
+   row currently offers a single rule, and a fixed two-column template would keep the
+   second track and leave the pill half empty. */
+.gene-tabs {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-template-columns: none;
+}
+
+.gene-tabs button {
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.gene-rule-note,
+.gene-data-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--warning);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.gene-rule-note[hidden],
+.gene-data-note[hidden] {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Gene comparison panels (below the 3D stage, gene layer only)
+   --------------------------------------------------------------------------- */
+
+.gene-compare {
+  display: grid;
+  /* One column that is allowed to be narrower than its content. Without the zero
+     minimum, the region track's intrinsic width -- one group per region, some 2500px --
+     sizes this column, and the whole section grows past the viewport: the header tools
+     end up off-screen, the class grid lays out columns for a width nobody can see, and
+     the track never scrolls because it is never constrained. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  background: rgba(6, 14, 21, 0.35);
+}
+
+.gene-compare[hidden] {
+  display: none !important;
+}
+
+.gene-compare-panel {
+  position: relative;
+  min-width: 0;
+  padding: 13px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+/* Titles take the leftover width and the tools keep the right edge, so adding genes
+   lengthens the caption instead of shifting the controls. */
+.gene-compare-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.gene-compare-titles {
+  min-width: 0;
+}
+
+.gene-compare-titles h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.gene-compare-caption {
+  margin: 3px 0 0;
+  color: var(--quiet);
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.gene-compare-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.gene-compare-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(1, 8, 14, 0.45);
+  color: var(--muted);
+  font-size: 8.5px;
+  cursor: pointer;
+}
+
+.gene-compare-btn:hover,
+.gene-compare-btn[aria-expanded="true"] {
+  border-color: var(--line-strong);
+  color: var(--accent-strong);
+}
+
+.gene-compare-btn span {
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: rgba(83, 215, 174, 0.14);
+  color: var(--accent-strong);
+  font-size: 7.5px;
+}
+
+.gene-compare-btn span:empty {
+  display: none;
+}
+
+.gene-compare-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.gene-compare-select select {
+  min-height: 26px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(1, 8, 14, 0.45);
+  color: var(--muted);
+  font-size: 8.5px;
+}
+
+/* ---- pickers ---- */
+
+.gene-compare-picker {
+  position: relative;
+}
+
+.gene-compare-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 24;
+  width: 268px;
+  padding: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #0e1b25;
+  box-shadow: var(--shadow);
+}
+
+.gene-compare-popover[hidden] {
+  display: none !important;
+}
+
+.gene-compare-popover-search input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  outline: 0;
+  background: rgba(1, 8, 14, 0.5);
+  color: var(--text);
+  font-size: 9px;
+}
+
+.gene-compare-presets {
+  display: flex;
+  gap: 5px;
+  margin: 7px 0;
+}
+
+.gene-compare-presets button {
+  flex: 1 1 auto;
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 7.5px;
+  cursor: pointer;
+}
+
+.gene-compare-presets button:hover {
+  border-color: var(--line-strong);
+  color: var(--accent-strong);
+}
+
+.gene-compare-popover-list {
+  max-height: 232px;
+  overflow-y: auto;
+}
+
+.gene-compare-picker-group + .gene-compare-picker-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(150, 185, 201, 0.08);
+}
+
+/* One click takes a whole anatomical group, which is what makes 163 regions a
+   handful of decisions rather than 163 of them. */
+.gene-compare-picker-group-head {
+  width: 100%;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gene-compare-picker-group-head:hover {
+  background: rgba(83, 215, 174, 0.1);
+  color: var(--accent-strong);
+}
+
+.gene-compare-picker-group-head.active {
+  color: var(--accent-strong);
+}
+
+.gene-compare-picker-family {
+  margin: 6px 0 3px;
+  color: var(--quiet);
+  font-size: 7.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.gene-compare-picker-row {
+  display: grid;
+  grid-template-columns: 12px auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 3px 5px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 8.5px;
+  cursor: pointer;
+}
+
+.gene-compare-picker-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gene-compare-picker-row input {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.gene-compare-picker-code {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.gene-compare-picker-row small {
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gene-compare-popover-note,
+.gene-compare-popover-empty {
+  margin: 7px 0 0;
+  color: var(--quiet);
+  font-size: 7.5px;
+  line-height: 1.5;
+}
+
+.gene-compare-popover-note:empty {
+  display: none;
+}
+
+/* ---- region panel ---- */
+
+/* Sideways scroll, never wrap: one baseline and one axis is what makes a grouped bar
+   chart readable, and wrapping would start a second baseline per row.
+   The axis sits outside the scrolling box rather than sticking to its left edge, so it
+   cannot move at all and the scrollbar belongs to the bars alone. */
+.gene-compare-plot {
+  /* Shared by the axis and the bars: the two only agree on a baseline if they agree on
+     a height and on the inset the groups carry. */
+  --bar-height: 132px;
+  --group-inset: 2px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.gene-compare-axis {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: var(--bar-height);
+  margin-top: var(--group-inset);
+  width: 42px;
+  padding-right: 6px;
+  border-right: 1px solid var(--line);
+  text-align: right;
+}
+
+.gene-compare-tick {
+  color: var(--quiet);
+  font-size: 7px;
+  line-height: 1;
+}
+
+/* Positioned against the axis itself, so the unit label hangs just below the zero tick
+   rather than off the panel. */
+.gene-compare-axis-unit {
+  position: absolute;
+  bottom: -11px;
+  left: 0;
+  color: var(--quiet);
+  font-size: 7px;
+  white-space: nowrap;
+}
+
+.gene-compare-track {
+  display: flex;
+  /* Tops, not bottoms. The labels underneath vary in length, so aligning the bottoms
+     lifted every group by the length of its own label and left the baselines staggered
+     against an axis none of them touched. */
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 6px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(104, 137, 148, 0.25) transparent;
+}
+
+.gene-compare-group {
+  display: grid;
+  /* One column, and the bars are what size it. A grid track sized by min-content takes
+     the widest unbreakable piece of each item, so a wrappable label contributes a word
+     rather than its whole length: the compound acronyms wrap inside the group instead of
+     stretching it to twice the width of its neighbours. */
+  grid-template-columns: min-content;
+  flex: 0 0 auto;
+  justify-items: center;
+  gap: 4px;
+  padding: var(--group-inset) 2px 0;
+  border-radius: 5px;
+}
+
+.gene-compare-group:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+/* The region open in the 3D view. Highlighted rather than isolated: the point of the
+   axis is that the selected region keeps its place in the distribution. */
+.gene-compare-group.selected {
+  background: rgba(83, 215, 174, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(83, 215, 174, 0.35);
+}
+
+.gene-compare-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: var(--bar-height);
+}
+
+.gene-compare-bar {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  width: 6px;
+  height: 100%;
+  border-radius: 2px 2px 0 0;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.gene-compare-bar i {
+  display: block;
+  width: 100%;
+  border-radius: inherit;
+  background: var(--series-colour, var(--accent));
+}
+
+/* A control is a yardstick, not a result: hatched and pale, so it reads as a reference
+   even where it towers over the selection. The hatching runs over the panel colour rather
+   than over grey, so each control keeps the hue that identifies it. */
+.gene-compare-bar[data-control] i {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--series-colour, #cfe4f7) 0 2px,
+    rgba(9, 19, 28, 0.6) 2px 4px
+  );
+  box-shadow: inset 0 0 0 1px rgba(190, 210, 220, 0.35);
+  /* Tinted rim where color-mix is available; the line above is the fallback. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--series-colour, #cfe4f7) 62%, transparent);
+}
+
+/* Not measured here. No fill and a marked track, so it cannot be read as zero. */
+.gene-compare-bar.missing {
+  background: transparent;
+  border-bottom: 1px dotted rgba(150, 185, 201, 0.35);
+}
+
+/* Turned sideways, because 106 groups on one axis leaves each label about 20px of width
+   and the catalogue's acronyms are compound ("CA1 CA2 CA3", "DGR CA4Rpy"). Reading
+   downwards rather than upwards puts the first character against its own bars and takes
+   the ellipsis off the end of the name, so scanning across the axis compares beginnings
+   at one height instead of hunting for where each label starts. */
+.gene-compare-group-label {
+  /* Enough for the longest compound acronym in the catalogue ("CA1C CA2C CA3C", 60px at
+     this size) so the axis reads without ellipses; the full name is in the title. */
+  max-height: 66px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--quiet);
+  font-size: 7px;
+  line-height: 1;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+}
+
+button.gene-compare-group-label {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+button.gene-compare-group-label:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.gene-compare-group.selected .gene-compare-group-label {
+  color: var(--accent-strong);
+}
+
+/* A coarse payload label with no parcel in the anatomy. Marked so it is not mistaken
+   for a region the 3D view is refusing to draw. */
+.gene-compare-group.unmapped .gene-compare-group-label {
+  font-style: italic;
+  opacity: 0.72;
+}
+
+/* Upright, once the group is wide enough to hold the longest word on the axis -- see
+   labelsFitUpright() in gene-compare-view.js, which sets the attribute for the whole
+   track at once. Compound acronyms wrap at their spaces instead of being cut, and only a
+   single word wider than its own group falls back to breaking, so the axis never trades a
+   region's identity for tidiness. */
+.gene-compare-track[data-labels="horizontal"] .gene-compare-group-label {
+  max-height: none;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  writing-mode: horizontal-tb;
+}
+
+/* The hover/focus readout. A group is a handful of 6px bars with no room for a figure,
+   so the numbers, the region's full name and the evidence behind the active gene live
+   here. Anchored to the panel, because the track it describes is a scroll container. */
+.gene-compare-tip {
+  position: absolute;
+  z-index: 26;
+  width: max-content;
+  max-width: 230px;
+  padding: 7px 9px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: rgba(9, 20, 30, 0.97);
+  box-shadow: var(--shadow);
+  /* It follows the pointer, so it must never be under it. */
+  pointer-events: none;
+}
+
+.gene-compare-tip[hidden] {
+  display: none !important;
+}
+
+.gene-compare-tip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+
+.gene-compare-tip-head strong {
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.gene-compare-tip-head span {
+  color: var(--muted);
+  font-size: 7.5px;
+}
+
+.gene-compare-tip-scope {
+  margin: 0 0 6px;
+  color: var(--quiet);
+  font-size: 7px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.gene-compare-tip-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 1px 0;
+  color: var(--muted);
+  font-size: 7.5px;
+}
+
+.gene-compare-tip-row.active {
+  color: var(--text);
+}
+
+.gene-compare-tip-row i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--series-colour, var(--accent));
+}
+
+.gene-compare-tip-row[data-control] i {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--series-colour, #cfe4f7) 0 2px,
+    rgba(9, 19, 28, 0.6) 2px 4px
+  );
+  box-shadow: inset 0 0 0 1px rgba(190, 210, 220, 0.35);
+}
+
+.gene-compare-tip-row strong {
+  color: var(--text);
+  font-size: 8px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.gene-compare-tip-row.missing strong {
+  color: #5c6874;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.gene-compare-tip-foot {
+  margin: 6px 0 0;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+  color: var(--quiet);
+  font-size: 7px;
+}
+
+.gene-compare-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 14px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.gene-compare-key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.gene-compare-key-item.active {
+  color: var(--text);
+}
+
+.gene-compare-key-item i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--series-colour, var(--accent));
+}
+
+/* Hatched like the bars it stands for, and in the same tint, so the key and the axis
+   name the same thing. */
+.gene-compare-key-item[data-control] i {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--series-colour, #cfe4f7) 0 2px,
+    rgba(9, 19, 28, 0.6) 2px 4px
+  );
+  box-shadow: inset 0 0 0 1px rgba(190, 210, 220, 0.35);
+}
+
+/* Same treatment in the picker, so the tint is known before the control is added. */
+.gene-compare-picker-swatch {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--series-colour, #cfe4f7) 0 2px,
+    rgba(9, 19, 28, 0.6) 2px 4px
+  );
+  box-shadow: inset 0 0 0 1px rgba(190, 210, 220, 0.35);
+}
+
+/* ---- class panel ---- */
+
+/* Wraps, unlike the region axis: each class block is read on its own, so a shared
+   baseline buys nothing and vertical growth is cheaper than sideways scrolling. */
+.gene-compare-classes {
+  display: grid;
+  /* min() so a panel narrower than one card still yields a card that fits it, rather
+     than a 232px column hanging off the edge. */
+  grid-template-columns: repeat(auto-fill, minmax(min(232px, 100%), 1fr));
+  gap: 9px;
+}
+
+.gene-compare-class {
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(1, 8, 14, 0.3);
+}
+
+.gene-compare-class header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.gene-compare-class-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--class-colour, var(--accent));
+}
+
+.gene-compare-class header strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 8.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gene-compare-class header small {
+  margin-left: auto;
+  color: var(--quiet);
+  font-size: 7px;
+  white-space: nowrap;
+}
+
+.gene-compare-class-row {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 34px;
+  gap: 6px;
+  align-items: center;
+  padding: 1px 0;
+}
+
+.gene-compare-class-symbol {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gene-compare-class-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.gene-compare-class-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--series-colour, var(--accent));
+}
+
+.gene-compare-class-row[data-control] .gene-compare-class-track i {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--series-colour, #cfe4f7) 0 2px,
+    rgba(9, 19, 28, 0.6) 2px 4px
+  );
+}
+
+.gene-compare-class-row strong {
+  color: var(--text);
+  font-size: 7.5px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.gene-compare-class-row.missing strong {
+  color: #5c6874;
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* Names the aggregation the reference bars below it belong to, because it is not the
+   one the bars above use. */
+.gene-compare-class-reference {
+  margin: 6px 0 3px;
+  padding-top: 5px;
+  border-top: 1px dashed rgba(150, 185, 201, 0.2);
+  color: var(--quiet);
+  font-size: 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.gene-compare-empty,
+.gene-compare-note {
+  margin: 8px 0 0;
+  color: var(--quiet);
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.gene-compare-note {
+  color: var(--warning);
+}
+
+.gene-compare-empty[hidden],
+.gene-compare-note[hidden] {
+  display: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

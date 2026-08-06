@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="atlas/styles.css">
 </head>
-<body>
+<body data-gene-atlas-base="gene-data">
     <div class="container">
         <div class="header">
             <span class="header-kicker">DigitalBrain Data Explorer</span>
@@ -37,6 +37,12 @@
                     <option value="">Select Donor</option>
                 </select>
             </div>
+
+            <p class="scope-note" id="geneScopeNote" hidden>
+                Gene expression is a cross-study merge with the dataset axis collapsed, so it is
+                always shown at <strong>global scope</strong>. Collection, dataset and donor filters
+                do not apply to this layer.
+            </p>
         </div>
 
         <div class="scope-banner">
@@ -229,16 +235,26 @@
                     <span class="header-kicker">Interactive 3D Atlas</span>
                 </div>
                 <div class="atlas-embed-meta">
+                    <!-- Layer switch lives in this header row, not the settings drawer: it is
+                         the atlas's primary control, and burying it needed a guided tour to
+                         make it discoverable at all. The atlas binds it by id, so only one
+                         copy may exist. -->
+                    <div class="layer-tabs atlas-embed-layer-tabs" id="dataLayerTabs" role="group" aria-label="Atlas data layer">
+                        <button type="button" data-layer="cells" class="active">Cell profiles</button>
+                        <button type="button" data-layer="functional">Functional</button>
+                        <button type="button" data-layer="structural">Structural</button>
+                        <button type="button" data-layer="genes">Gene expression</button>
+                    </div>
                     <div class="dataset-status" id="datasetStatus" role="status">
                         <span class="status-dot"></span>
                         <span>Whole-brain cells + Allen 3D anatomy</span>
                         <strong>105 profiles placed</strong>
                     </div>
-                    <!-- placed regions / cell classes 概览已按需求移除；保留隐藏计数节点供 atlas 运行时写入。 -->
+                    <!-- placed regions / cell types 概览已按需求移除；保留隐藏计数节点供 atlas 运行时写入。 -->
                     <div class="atlas-embed-metrics" hidden>
                         <strong id="visibleCount">105</strong>
                         <strong id="cellTypeCount">31</strong>
-                        <span id="secondaryCountLabel">cell classes</span>
+                        <span id="secondaryCountLabel">cell types</span>
                     </div>
                     <div class="atlas-embed-actions">
                         <button class="atlas-embed-btn" type="button" id="atlasSettingsToggle" aria-expanded="false" aria-controls="atlasControlPanel">Atlas settings</button>
@@ -249,33 +265,42 @@
                 </div>
             </div>
 
+            <!-- The only chrome the gene layer adds; every other control is a relabelled
+                 reuse of the drawer sections below. Hidden until that layer is active. -->
+            <div class="gene-search-row" id="geneSearchRow" hidden>
+                <div class="gene-search-field">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+                    <input id="geneSearchInput" type="search" placeholder="Search a gene, e.g. GFAP" autocomplete="off" aria-label="Search a gene" />
+                    <div class="gene-search-results" id="geneSearchResults" hidden role="listbox"></div>
+                </div>
+                <div class="gene-chips" id="geneChips" aria-label="Selected genes"></div>
+                <div class="gene-switches">
+                    <div class="layer-tabs gene-tabs" id="geneMetricTabs" role="group" aria-label="Gene metric">
+                        <button type="button" data-metric="mean" class="active">Mean expression</button>
+                        <button type="button" data-metric="detection">Detection rate</button>
+                    </div>
+                    <div class="layer-tabs gene-tabs" id="geneRuleTabs" role="group" aria-label="Aggregation rule">
+                        <button type="button" data-rule="cell_weighted">Cell-weighted</button>
+                        <button type="button" data-rule="donor_balanced" class="active">Donor-balanced</button>
+                    </div>
+                </div>
+                <p class="gene-rule-note" id="geneRuleNote" hidden></p>
+                <p class="gene-data-note" id="geneDataNote" hidden></p>
+            </div>
+
             <div class="atlas-embed-stage">
                 <aside class="control-panel" id="atlasControlPanel" aria-label="Visualization controls">
                     <button type="button" class="atlas-panel-close" id="atlasSettingsClose" aria-label="Close settings">×</button>
-                    <section class="control-section">
-                        <div class="section-heading"><span>Atlas layer</span></div>
-                        <div class="layer-tabs" id="dataLayerTabs" role="group" aria-label="Atlas data layer">
-                            <button type="button" data-layer="cells" class="active">Cell profiles</button>
-                            <button type="button" data-layer="functional">Functional</button>
-                            <button type="button" data-layer="structural">Structural</button>
-                        </div>
-                    </section>
                     <section class="control-section" id="abundanceSection">
-                        <div class="section-heading"><span>Cell class</span><button class="text-button" id="resetFilters" type="button">Reset</button></div>
+                        <div class="section-heading"><span>Cell type</span><button class="text-button" id="resetFilters" type="button">Reset</button></div>
                         <div class="cell-type-list" id="cellTypeList"></div>
                     </section>
-                    <section class="control-section" id="atlasSearchSection">
-                        <label class="field-label" for="regionSearch">Search the atlas</label>
-                        <div class="search-field">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
-                            <input id="regionSearch" type="search" placeholder="Region, connection, or function" autocomplete="off" />
-                        </div>
-                        <div class="search-results" id="searchResults" hidden></div>
-                        <p class="control-footnote">Try “memory”, “DMN”, “A23 A32”, or a region name.</p>
-                        <div class="function-focus" id="functionFocus" hidden>
-                            <div><small>Functional focus</small><strong id="functionFocusLabel">Memory</strong><span id="functionFocusSummary">—</span></div>
-                            <button id="clearFunctionFocus" type="button" aria-label="Clear functional focus">×</button>
-                        </div>
+                    <section class="control-section" id="geneCellTypeSection" hidden>
+                        <div class="section-heading"><span>Cell type<span class="section-count" id="geneCellTypeCount" hidden></span></span><button class="text-button" id="geneCellTypeReset" type="button">Reset</button></div>
+                        <p class="control-footnote">Tick any number of classes: the atlas is recoloured from those alone, not just the detail panel. “only” isolates one class.</p>
+                        <p class="control-footnote" id="geneCellTypeValueNote" hidden></p>
+                        <p class="control-footnote gene-detail-note" id="geneDetailNote" hidden></p>
+                        <div class="cell-type-list gene-cell-type-list" id="geneCellTypeList"></div>
                     </section>
                     <section class="control-section" id="abundanceFilterSection">
                         <div class="section-heading"><label for="abundanceFilter">Minimum abundance</label><output id="abundanceValue" for="abundanceFilter">0%</output></div>
@@ -292,15 +317,9 @@
                             <label class="switch"><input id="dmnToggle" type="checkbox" checked /><span></span></label>
                         </div>
                     </section>
-                    <section class="control-section">
-                        <div class="section-heading"><span>Anatomy style</span></div>
-                        <div class="layer-tabs anatomy-style-tabs" id="anatomyStyleTabs" role="group" aria-label="Anatomy rendering style">
-                            <button type="button" data-anatomy-style="flecks">Tiny flecks</button>
-                            <button type="button" data-anatomy-style="boundaries" class="active">Boundaries</button>
-                        </div>
-                    </section>
                     <section class="control-section compact">
                         <div class="toggle-row"><span><strong>3D anatomy</strong><small>Official Allen voxel geometry</small></span><label class="switch"><input id="shellToggle" type="checkbox" checked /><span></span></label></div>
+                        <div class="toggle-row"><span><strong>Region envelopes</strong><small>Filled parcel boundary overlays</small></span><label class="switch"><input id="envelopeToggle" type="checkbox" checked /><span></span></label></div>
                         <div class="toggle-row"><span><strong>Auto-rotate</strong><small>Pause automatically on selection</small></span><label class="switch"><input id="rotateToggle" type="checkbox" /><span></span></label></div>
                     </section>
                     <section class="data-note">
@@ -322,13 +341,26 @@
                                 <button type="button" data-view="anterior">Anterior</button>
                             </div>
                         </div>
+                        <!-- Search sits in the toolbar, centred between the view presets and the
+                             zoom actions; the atlas binds every element by id, so the move is
+                             markup-only. -->
+                        <div class="viewer-search">
+                            <div class="search-field">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>
+                                <input id="regionSearch" type="search" placeholder="Region, connection, or function" autocomplete="off" aria-label="Search the atlas" />
+                            </div>
+                            <div class="search-results" id="searchResults" hidden></div>
+                            <div class="function-focus" id="functionFocus" hidden>
+                                <div><small>Functional focus</small><strong id="functionFocusLabel">Memory</strong><span id="functionFocusSummary">—</span></div>
+                                <button id="clearFunctionFocus" type="button" aria-label="Clear functional focus">×</button>
+                            </div>
+                        </div>
                         <div class="viewer-actions" id="threeDViewerActions" hidden>
                             <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
                             <button id="zoomReset" type="button" aria-label="Reset view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"></path><path d="M4 4v4.6h4.6"></path></svg></button>
                             <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
                         </div>
                     </div>
-                    <div class="geometry-status available" id="geometryStatus" role="status"><span></span>Fixed 3D anchors · 141 anatomy parcels · 105/106 profiles placed</div>
                     <div class="anatomy-view" id="anatomyView" hidden>
                         <div class="anatomy-stage" id="anatomyStage">
                             <svg id="anatomySvg" viewBox="0 0 860 620" role="img" aria-label="Schematic anatomy"><g class="anatomy-regions"></g><g class="anatomy-metrics"></g></svg>
@@ -349,6 +381,15 @@
                             <div class="legend-heading"><span>All cell types</span><strong>Within-region composition</strong></div>
                             <div class="legend-key" id="legendKey"></div>
                         </div>
+                        <div id="legendGenes" hidden>
+                            <div class="legend-heading"><span id="legendGenesTitle">Gene expression</span><strong id="legendGenesMetric">Mean expression</strong></div>
+                            <div class="legend-gene-rows" id="legendGeneRows"></div>
+                            <div class="legend-density">
+                                <div class="legend-density-ramp" id="legendDensityRamp" aria-label="Point density scale, sparse to dense"></div>
+                                <div class="legend-density-ticks" id="legendDensityTicks"></div>
+                            </div>
+                            <div class="legend-labels"><span>Sparser</span><span id="legendDensityCaption">Lit point density</span><span>Denser</span></div>
+                        </div>
                         <div id="legendConnectivity" hidden>
                             <div class="legend-heading"><span id="connectivityLegendTitle">Functional connectivity</span><strong id="connectivityLegendThreshold">Top 4%</strong></div>
                             <div class="connectivity-ramp" aria-label="Rainbow connection-strength colour scale"></div>
@@ -358,7 +399,7 @@
                             <div class="connectivity-visual-key"><span><i class="dmn-node"></i>DMN node</span><span><i class="function-edge"></i>Function-focused link</span></div>
                         </div>
                         <div class="visual-key" id="visualKey" aria-label="Visual encoding"><span><i class="anatomy"></i>Anatomy parcel</span><span><i class="boundary"></i>Parcel boundary</span><span><i class="profile"></i>Cell profile</span></div>
-                        <div class="mapping-key" id="mappingKey" aria-label="Anatomical mapping confidence"><span><i class="exact"></i>Exact anatomy</span><span><i class="proxy"></i>Broad anatomical proxy</span></div>
+                        <div class="mapping-key" id="mappingKey" aria-label="Anatomical mapping confidence"><span><i class="exact"></i>Exact anatomy</span><span><i class="coarse"></i>Coarse ontology proxy</span><span><i class="proxy"></i>Curated gyral proxy</span></div>
                     </div>
                     <div class="interaction-hint"><span class="mouse-icon" aria-hidden="true"></span><span id="interactionHintText">Drag to rotate anatomy · Scroll to zoom · Click a cell-profile marker</span></div>
                 </section>
@@ -381,8 +422,12 @@
                             <div class="function-tags" id="regionFunctionTags"></div>
                             <div class="network-tags" id="regionNetworkTags"></div>
                         </section>
+                        <section class="gene-region-section" id="geneRegionSection" hidden>
+                            <div class="section-heading"><h3>Selected genes here</h3><span id="geneRegionCaption">Mean expression</span></div>
+                            <div class="gene-region-rows" id="geneRegionRows"></div>
+                        </section>
                         <section class="composition-section" id="compositionSection">
-                            <div class="section-heading"><h3>Cell-class composition</h3><span>Relative proportion</span></div>
+                            <div class="section-heading"><h3 id="compositionTitle">Cell-class composition</h3><span id="compositionCaption">Relative proportion</span></div>
                             <div class="composition-bars" id="compositionBars"></div>
                         </section>
                         <section class="member-regions-section" id="memberRegionsSection" hidden>
@@ -408,6 +453,83 @@
                 </aside>
             </div>
 
+            <!-- Quantitative companion to the 3D view, gene layer only. The map answers
+                 "where roughly", these two panels answer "how much, against what".
+                 Region axis scrolls horizontally on purpose: one shared baseline for all
+                 regions is what makes the bars comparable, and wrapping would create a
+                 new baseline per row. The class panel wraps instead, because each class
+                 is read on its own. -->
+            <section class="gene-compare" id="geneCompare" hidden aria-label="Gene expression comparison">
+                <article class="gene-compare-panel" id="geneRegionComparePanel">
+                    <header class="gene-compare-head">
+                        <div class="gene-compare-titles">
+                            <h3>Across brain regions</h3>
+                            <p class="gene-compare-caption" id="geneRegionCompareCaption">—</p>
+                        </div>
+                        <div class="gene-compare-tools">
+                            <div class="gene-compare-picker" id="geneRegionPicker">
+                                <button type="button" class="gene-compare-btn" id="geneRegionPickerToggle" aria-expanded="false" aria-controls="geneRegionPickerPanel">Regions<span id="geneRegionPickerCount"></span></button>
+                                <div class="gene-compare-popover" id="geneRegionPickerPanel" hidden>
+                                    <div class="gene-compare-popover-search">
+                                        <input type="search" id="geneRegionPickerSearch" placeholder="Filter by acronym or name" autocomplete="off" aria-label="Filter regions" />
+                                    </div>
+                                    <div class="gene-compare-presets" id="geneRegionPickerPresets">
+                                        <button type="button" data-region-preset="all">All with data</button>
+                                        <button type="button" data-region-preset="top">Top 20</button>
+                                        <button type="button" data-region-preset="none">Clear</button>
+                                    </div>
+                                    <div class="gene-compare-popover-list" id="geneRegionPickerList"></div>
+                                    <p class="gene-compare-popover-note" id="geneRegionPickerNote"></p>
+                                </div>
+                            </div>
+                            <div class="gene-compare-picker" id="geneControlPicker">
+                                <button type="button" class="gene-compare-btn" id="geneControlPickerToggle" aria-expanded="false" aria-controls="geneControlPickerPanel">Controls<span id="geneControlPickerCount"></span></button>
+                                <div class="gene-compare-popover" id="geneControlPickerPanel" hidden>
+                                    <div class="gene-compare-popover-list" id="geneControlPickerList"></div>
+                                    <p class="gene-compare-popover-note">Housekeeping genes are drawn as reference bars, never as part of the selection. Classic controls (ACTB, GAPDH) are the familiar ones but vary 2.5-2.8x between brain cell types; the stable set varies 1.4-1.7x and is the one to trust when the levels matter. In the type panel each control is read in that type, so it shows how low the baseline sits there before any gene is compared against it.</p>
+                                </div>
+                            </div>
+                            <label class="gene-compare-select">
+                                <span>Sort</span>
+                                <select id="geneRegionCompareSort" aria-label="Sort regions">
+                                    <option value="value">Highest first</option>
+                                    <option value="name">Acronym</option>
+                                    <option value="group">Anatomical group</option>
+                                </select>
+                            </label>
+                            <div class="layer-tabs gene-tabs" id="geneCompareScaleTabs" role="group" aria-label="Bar scale">
+                                <button type="button" data-scale="shared" class="active">Shared scale</button>
+                                <button type="button" data-scale="series">Per gene</button>
+                            </div>
+                            <!-- Exports the axis as drawn: the selected genes by the regions the
+                                 picker allows, not the region clicked on the map. -->
+                            <button type="button" class="gene-compare-btn" id="geneRegionExportBtn" disabled>Export CSV</button>
+                        </div>
+                    </header>
+                    <div class="gene-compare-plot" id="geneRegionComparePlot">
+                        <div class="gene-compare-axis" id="geneRegionCompareAxis" aria-hidden="true"></div>
+                        <div class="gene-compare-track" id="geneRegionCompareTrack" data-labels="vertical"></div>
+                    </div>
+                    <!-- Outside the track on purpose: the track scrolls, and a readout
+                         positioned inside it would be clipped at its edges. -->
+                    <div class="gene-compare-tip" id="geneRegionCompareTip" role="tooltip" hidden></div>
+                    <p class="gene-compare-empty" id="geneRegionCompareEmpty" hidden></p>
+                    <div class="gene-compare-key" id="geneCompareKey" aria-label="Series key"></div>
+                </article>
+
+                <article class="gene-compare-panel" id="geneClassComparePanel">
+                    <header class="gene-compare-head">
+                        <div class="gene-compare-titles">
+                            <h3 id="geneClassCompareTitle">Within cell types</h3>
+                            <p class="gene-compare-caption" id="geneClassCompareCaption">—</p>
+                        </div>
+                    </header>
+                    <div class="gene-compare-classes" id="geneClassCompareGrid"></div>
+                    <p class="gene-compare-empty" id="geneClassCompareEmpty" hidden></p>
+                    <p class="gene-compare-note" id="geneClassCompareNote" hidden></p>
+                </article>
+            </section>
+
             <dialog id="aboutDialog">
                 <form method="dialog">
                     <button class="dialog-close" aria-label="Close">×</button>
@@ -432,7 +554,11 @@
     <script src="atlas/data/allen_3d_geometry.js"></script>
     <script src="atlas/data/connectivity.js"></script>
     <script src="atlas/data/atlas_knowledge.js"></script>
+    <script src="atlas/gene_point_cloud.js"></script>
     <script src="atlas/app.js"></script>
+    <script src="gene-atlas-data.js"></script>
+    <script src="gene-compare-view.js"></script>
+    <script src="gene-atlas-view.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

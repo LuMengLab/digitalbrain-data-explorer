@@ -1897,7 +1897,7 @@
     dom.cellTypeCount.textContent = String(edges.length);
     dom.secondaryCountLabel.textContent = "visible links";
     dom.connectivityEdgeCount.textContent = `${edges.length} of ${connectivity.metadata.edgeCount} links`;
-    dom.connectivityLegendThreshold.textContent = `Top ${100 - state.connectivityPercentile}%`;
+    dom.connectivityLegendThreshold.textContent = `${state.connectivityPercentile}%`;
     dom.connectivityLegendMinPercentile.textContent = `P${state.connectivityPercentile}`;
     dom.connectivityLegendMinValue.textContent = `≥ ${threshold.toFixed(3)}`;
     dom.connectivityLegendMaxValue.textContent = values[values.length - 1].toFixed(3);
@@ -2008,9 +2008,8 @@
     const progress =
       ((state.connectivityPercentile - minimum) / (maximum - minimum)) * 100;
     dom.connectivityFilter.style.background = `linear-gradient(90deg, #3b4cc0 0%, #20c7c7 ${Math.max(12, progress * 0.42)}%, #f0e442 ${Math.max(22, progress * 0.72)}%, #d7191c ${progress}%, #243640 ${progress}%)`;
-    const topPercent = 100 - state.connectivityPercentile;
-    dom.connectivityValue.textContent = `Top ${topPercent}%`;
-    dom.connectivityLegendThreshold.textContent = `Top ${topPercent}%`;
+    dom.connectivityValue.textContent = `${state.connectivityPercentile}%`;
+    dom.connectivityLegendThreshold.textContent = `${state.connectivityPercentile}%`;
   }
 
   function syncDataLayerControls() {

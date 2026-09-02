@@ -70,8 +70,8 @@ cell-class composition onto the atlas, so you see *where* the selected cells sit
   Markers distinguish **exact anatomy** from **broad anatomical proxy**
   placements.
 - **Connectivity (FC/SC):** a shared 55-region universe (1,485 undirected
-  pairs) with an adjustable **Top 10% → Top 1%** within-matrix percentile
-  threshold, a rainbow strength scale, optional **DMN** node labels, each
+  pairs) with an adjustable **0% → 100%** within-matrix percentile cutoff,
+  a rainbow strength scale, optional **DMN** node labels, each
   region's strongest connections, and per-pair weight + percentile with a
   cautious, non-causal interpretation.
 - **Search & focus:** one search box spanning regions, connection pairs, and ten

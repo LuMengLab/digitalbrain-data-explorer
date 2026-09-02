@@ -26,7 +26,7 @@ across the DigitalBrain regional hierarchy.
 - Independent atlas layers for cell profiles, functional connectivity and
   structural connectivity.
 - FC/SC links across the 55-region shared connectivity universe, with an
-  adjustable top-10% to top-1% matrix-percentile threshold and region-specific
+  adjustable 0% to 100% matrix-percentile cutoff and region-specific
   strongest-connection lists.
 - Rainbow link hue encoding from threshold percentile to the strongest matrix
   value, with an explicit percentile and raw-weight colour bar.

@@ -143,6 +143,56 @@ function bootAtlas(options) {
   return { window, drawOneFrame };
 }
 
+function testThresholdControlsCoverTheFullPercentageRange() {
+  const { window } = bootAtlas();
+  const document = window.document;
+  const cases = [
+    ['abundanceFilter', '0'],
+    ['connectivityFilter', '96'],
+  ];
+
+  cases.forEach(([id, defaultValue]) => {
+    const input = document.getElementById(id);
+    assert.equal(input.min, '0', `${id} should start at 0%`);
+    assert.equal(input.max, '100', `${id} should end at 100%`);
+    assert.equal(input.step, '1', `${id} should move in whole percentage points`);
+    assert.equal(input.defaultValue, defaultValue, `${id} should preserve its default`);
+    assert.deepEqual(
+      [...input.closest('.control-section').querySelectorAll('.range-labels span')]
+        .map((label) => label.textContent.trim()),
+      ['0%', '100%'],
+      `${id} should label the full percentage interval`,
+    );
+  });
+}
+
+function testConnectionThresholdUsesDirectPercentileLabelsAndBoundaryFiltering() {
+  const { window, drawOneFrame } = bootAtlas();
+  const document = window.document;
+  const input = document.getElementById('connectivityFilter');
+  const output = document.getElementById('connectivityValue');
+  const legend = document.getElementById('connectivityLegendThreshold');
+  const visibleLinks = document.getElementById('cellTypeCount');
+  const totalLinks = window.DIGITALBRAIN_CONNECTIVITY_DATA.metadata.edgeCount;
+
+  document.querySelector('[data-layer="functional"]').click();
+
+  input.value = '0';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  drawOneFrame();
+  assert.equal(output.textContent, '0%', 'the control should display its percentile directly');
+  assert.equal(legend.textContent, '0%', 'the legend should use the same direct percentile');
+  assert.equal(Number(visibleLinks.textContent), totalLinks, '0% should make every link eligible');
+
+  input.value = '100';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  drawOneFrame();
+  assert.equal(output.textContent, '100%', 'the upper boundary should display 100%');
+  assert.equal(legend.textContent, '100%', 'the legend should display the same upper boundary');
+  assert.ok(Number(visibleLinks.textContent) > 0, '100% should retain the maximum-valued link');
+  assert.ok(Number(visibleLinks.textContent) < totalLinks, '100% should remove lower-valued links');
+}
+
 // A panel outside the atlas -- the comparison charts under the 3D view -- has to follow
 // the canvas selection, and polling for it is how two copies of one state drift apart.
 // So the atlas announces it, and the announcement is the contract.
@@ -1292,6 +1342,8 @@ function testOverviewViewReleasesTheScopeLock() {
 
 function main() {
   const cases = [
+    ['testThresholdControlsCoverTheFullPercentageRange', testThresholdControlsCoverTheFullPercentageRange],
+    ['testConnectionThresholdUsesDirectPercentileLabelsAndBoundaryFiltering', testConnectionThresholdUsesDirectPercentileLabelsAndBoundaryFiltering],
     ['testGeneLayerIsAcceptedByTheLayerWhitelist', testGeneLayerIsAcceptedByTheLayerWhitelist],
     ['testGeneValuesDriveRegionColouring', testGeneValuesDriveRegionColouring],
     ['testRangeUsesGeneValuesInGeneLayer', testRangeUsesGeneValuesInGeneLayer],

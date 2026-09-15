@@ -155,6 +155,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    raise SystemExit("Full-data Pages publication is retired. Publish only the migration notice in github-pages/.")
     args = parse_args()
     build_release_dir(args.source, args.output)
     print(f"[write] {args.output.resolve()}")

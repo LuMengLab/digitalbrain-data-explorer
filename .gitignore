@@ -21,3 +21,23 @@ github-pages/gene-data/
 # 交付包内的大体积衍生数据：不使用（44M 版），原始 tarball 在 /data/DigitalBrain/ 可重解压
 digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2/digitalbrain_gene_atlas/public/data/
 digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2/digitalbrain_gene_atlas_data_host/public/data/
+
+# Retired public data: keep local data outside version control.
+/gene-data/
+/gene_atlas_data/
+/gene_atlas_web/
+/gene_atlas_cache/
+/github-pages/gene-data/
+/digitalbrain_data.js
+/digitalneuron_data.js
+/digitalneuron_data-0.js
+/github-pages/digitalbrain_data.js
+/github-pages/digitalneuron_data.js
+/github-pages/digitalneuron_data-0.js
+/publication_csv/
+/data/
+/atlas/data/
+/github-pages/atlas/data/
+/interactive_brain_atlas/data/
+/interactive_brain_atlas/audits/
+/digitalbrain_gene_atlas_student_integration_package_2026-08-02_v2/digitalbrain_gene_atlas/data/

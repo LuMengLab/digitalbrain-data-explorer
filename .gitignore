@@ -1,0 +1,8 @@
+# Keep Pages data-free.
+/*
+!/.gitignore
+!/index.html
+!/404.html
+!/.nojekyll
+!/README.md
+!/CNAME
